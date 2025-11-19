@@ -5,7 +5,7 @@ This project is based on BrianGIG [Auto-Il2cppDumper](https://github.com/BryanGI
 
 # NO support
 
-Due to the variety and complexity of protection and encryption methods utilized by many games, we cannot offer direct support or assistance for this project. Consequently, the Issues section is closed. Currently, only Pull Requests are being accepted. Please refrain from contacting me privately or creating unrelated issues on my other projects.
+Due to the variety and complexity of protection and encryption methods utilized by many games, I cannot offer support or assistance for this project. Consequently, the Issues section is closed. Currently, only Pull Requests are being accepted. Please refrain from contacting me privately or creating unrelated issues on my other projects.
 
 # How to use
 Download pre-compiled libs [HERE](https://github.com/AndnixSH/Auto-Il2cppDumper/releases) and follow steps below
