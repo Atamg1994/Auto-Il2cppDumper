@@ -12,30 +12,36 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up JDK 17
-      uses: actions/setup-java@v3
+      uses: actions/setup-java@v4
       with:
-        distribution: temurin
-        java-version: 17
+        distribution: 'temurin'
+        java-version: '17'
+        cache: 'gradle'
 
-    - name: Install Android SDK + NDK
-      uses: android-actions/setup-sdk@v1
+    # Используем более новую версию для настройки SDK
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
       with:
-        api-level: 31
-        build-tools: "31.0.0"
-        ndk: "23.1.7779620"
+        # Указываем нужные компоненты, если их нет в системе
+        packages: 'platforms;android-31 build-tools;31.0.0'
+
+    - name: Setup NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r23b
+        link-to-sdk: true # Важно для связи NDK с Gradle
 
     - name: Make gradlew executable
       run: chmod +x ./gradlew
 
-    - name: Sync and build
-      run: ./gradlew clean assembleDebug
+    - name: Build with Gradle
+      run: ./gradlew assembleDebug
 
-
-    - name: Upload APK
-      uses: actions/upload-artifact@v6.0.0
+    - name: Upload All Outputs
+      uses: actions/upload-artifact@v6 # Твоя 6-я версия
       with:
-        name: build-output
+        name: full-build-output
         path: app/build/outputs/
