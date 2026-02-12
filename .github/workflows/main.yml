@@ -33,8 +33,9 @@ jobs:
     - name: Sync and build
       run: ./gradlew clean assembleDebug
 
+
     - name: Upload APK
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v6.0.0
       with:
         name: build-output
         path: app/build/outputs/
