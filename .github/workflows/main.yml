@@ -21,18 +21,42 @@ jobs:
         java-version: '17'
         cache: 'gradle'
 
-    # Используем более новую версию для настройки SDK
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
       with:
-        # Указываем нужные компоненты, если их нет в системе
         packages: 'platforms;android-31 build-tools;31.0.0'
 
     - name: Setup NDK
       uses: nttld/setup-ndk@v1
       with:
         ndk-version: r23b
-        link-to-sdk: true # Важно для связи NDK с Gradle
+        link-to-sdk: true
+
+    # ЭТАП СКАТЫВАНИЯ FRIDA GUMJS 17.7.3
+    - name: Download Frida GumJS Devkit (17.7.3)
+      run: |
+        # Создаем структуру папок для NDK
+        mkdir -p jni/frida/include
+        mkdir -p jni/frida/lib/arm64-v8a
+        mkdir -p jni/frida/lib/armeabi-v7a
+
+        # 1. Скачиваем 64-битную версию (ARM64)
+        curl -L https://github.com/frida/frida/releases/download/17.7.3/frida-gumjs-devkit-17.7.3-android-arm64.tar.xz -o devkit64.tar.xz
+        tar -xJf devkit64.tar.xz -C jni/frida/lib/arm64-v8a
+
+        # 2. Скачиваем 32-битную версию (ARM)
+        curl -L https://github.com/frida/frida/releases/download/17.7.3/frida-gumjs-devkit-17.7.3-android-arm.tar.xz -o devkit32.tar.xz
+        tar -xJf devkit32.tar.xz -C jni/frida/lib/armeabi-v7a
+
+        # 3. Переносим хидеры в общую папку (они идентичны)
+        # Находим файл frida-gumjs.h и перемещаем его
+        mv jni/frida/lib/arm64-v8a/*.h jni/frida/include/
+
+        # 4. Очистка временных файлов
+        rm devkit64.tar.xz devkit32.tar.xz
+        
+        echo "Frida 17.7.3 Devkit ready for NDK build"
+
 
     - name: Make gradlew executable
       run: chmod +x ./gradlew
@@ -41,7 +65,7 @@ jobs:
       run: ./gradlew assembleDebug
 
     - name: Upload All Outputs
-      uses: actions/upload-artifact@v6 # Твоя 6-я версия
+      uses: actions/upload-artifact@v4 # На GitHub Actions v4 сейчас актуальна, v6 еще может не быть
       with:
         name: full-build-output
         path: app/build/outputs/
