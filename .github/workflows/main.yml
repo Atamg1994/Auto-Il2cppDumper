@@ -1,9 +1,11 @@
 name: Build Auto-Il2cppDumper
- 
+
 on:
+  workflow_dispatch: # Позволяет запускать вручную из меню Actions
   push:
-    branches: [ "master", "main" ]
+    branches: [ "master", "main" ] # Добавьте имя своей ветки
   pull_request:
+    
 
 jobs:
   build:
@@ -21,18 +23,16 @@ jobs:
         java-version: '17'
         cache: 'gradle'
 
-    # Используем более новую версию для настройки SDK
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
       with:
-        # Указываем нужные компоненты, если их нет в системе
         packages: 'platforms;android-31 build-tools;31.0.0'
 
     - name: Setup NDK
       uses: nttld/setup-ndk@v1
       with:
         ndk-version: r23b
-        link-to-sdk: true # Важно для связи NDK с Gradle
+        link-to-sdk: true
 
     - name: Make gradlew executable
       run: chmod +x ./gradlew
@@ -41,7 +41,7 @@ jobs:
       run: ./gradlew assembleDebug
 
     - name: Upload All Outputs
-      uses: actions/upload-artifact@v6 # Твоя 6-я версия
+      uses: actions/upload-artifact@v4 # Исправлено с v6 на v4 (актуальная стабильная)
       with:
         name: full-build-output
         path: app/build/outputs/
