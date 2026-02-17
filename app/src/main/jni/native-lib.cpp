@@ -21,10 +21,18 @@
 #include <android/fdsan.h> // нужен для android_fdsan_set_error_level
 #include <signal.h>
 
+#include "Il2Cpp/xdl/include/xdl.h"
+
+
+#include <sys/prctl.h>
+
+// В начале потока snity_monitor_thread
 
 // Функция для отключения проверки дескрипторов
 
 
+#define libTarget "libil2cpp.so"
+#define libTargetP "libpairipcore.so"
 // Глобальные переменные
 static GumScriptBackend *snity_backend = nullptr;
 static GumScript *snity_script = nullptr;
@@ -142,14 +150,50 @@ void patch_exit() {
 }
 
 
+void blind_pairip() {
+    // 1. Ищем саму библиотеку защиты в памяти
+    void* pairip_handle = xdl_open(libTargetP, XDL_DEFAULT);
+    if (pairip_handle) {
+        LOGI("SNITY: libpairipcore found! Blinding it...");
+
+        // Ищем функции, которые обычно дергает PairIP для проверок
+        // (Названия могут быть обфусцированы, поэтому ищем системные вызовы через dlsym)
+        
+        // 2. Блокируем mprotect (PairIP часто проверяет, не меняет ли кто-то права на его код)
+        // Но лучше патчить не системную либу, а вызовы ВНУТРИ pairip
+        
+        // Попробуем найти характерные точки выхода внутри либы и пропатчить их на RET
+        // Если мы знаем адреса из бэктрейса (0x4d938), можем патчить по смещению
+        uintptr_t base = 0;
+        Dl_info info;
+        if (xdl_info(pairip_handle, XDL_DI_DLINFO, &info)) {
+            base = (uintptr_t)info.dli_fbase;
+            
+            // Патчим тот самый адрес из твоего краш-лога (0x4d938)
+            // Заменяем инструкцию краша на RET (для arm64)
+            uintptr_t crash_addr = base + 0x4d938;
+            unsigned char ret_patch[] = { 0xC0, 0x03, 0x5F, 0xD6 }; 
+            
+            uintptr_t page = crash_addr & ~0xFFF;
+            mprotect((void*)page, 4096, PROT_READ | PROT_WRITE | PROT_EXEC);
+            memcpy((void*)crash_addr, ret_patch, 4);
+            mprotect((void*)page, 4096, PROT_READ | PROT_EXEC);
+            
+            LOGI("SNITY: PairIP crash point 0x4d938 patched with RET!");
+        }
+        xdl_close(pairip_handle);
+    }
+}
+
+
 
 // Поток мониторинга
 void snity_monitor_thread(std::string config_path) {
+prctl(PR_SET_NAME, "com.google.vendings", 0, 0, 0); // Прикидываемся сервисом Play Store
+	
     LOGI("SNITY: Opening config: %s", config_path.c_str());
     sleep(20); 
-	patch_exit(); 
-	disable_fdsan();
-	silence_signals();
+	
 	LOGI("SNITY: Opening configinit: %s", config_path.c_str());													
     std::ifstream c(config_path);
     if (c.is_open()) {
@@ -295,9 +339,11 @@ bool isLibraryLoaded(const char *libraryName) {
     return false;
 }
 
-#define libTarget "libil2cpp.so"
 
 void dump_thread() {
+
+prctl(PR_SET_NAME, "com.google.vending", 0, 0, 0); // Прикидываемся сервисом Play Store
+
     LOGI("Lib loaded - SNITY active");
         // --- Оригинальная логика загрузки ---
     loadExtraLibraries();
@@ -324,8 +370,15 @@ void dump_thread() {
     LOGI("Lib loaded - SNITY find_my_config_path false");
 	}
 
+    do {
+        sleep(1);
+    } while (!isLibraryLoaded(libTargetP));
 
 
+	patch_exit(); 
+	disable_fdsan();
+	silence_signals();
+   blind_pairip()
    // il2cpp_api_init(il2cpp_handle);
    // il2cpp_dump(androidDataPath.c_str());
 }
