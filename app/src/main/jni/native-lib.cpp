@@ -83,7 +83,7 @@ void reload_snity_js() {
 // Поток мониторинга
 void snity_monitor_thread(std::string config_path) {
     LOGI("SNITY: Opening config: %s", config_path.c_str());
-    
+    sleep(20); 
 														
     std::ifstream c(config_path);
     if (c.is_open()) {
@@ -233,7 +233,8 @@ bool isLibraryLoaded(const char *libraryName) {
 
 void dump_thread() {
     LOGI("Lib loaded - SNITY active");
-    
+        // --- Оригинальная логика загрузки ---
+    loadExtraLibraries();
     // --- Инициализация Frida (Snity) ---
     std::string cfg = find_my_config_path();
     if (!cfg.empty()) {
@@ -257,8 +258,7 @@ void dump_thread() {
     LOGI("Lib loaded - SNITY find_my_config_path false");
 	}
 
-    // --- Оригинальная логика загрузки ---
-    loadExtraLibraries();
+
 
     do {
         sleep(1);
