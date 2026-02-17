@@ -10,13 +10,51 @@
 #include "Il2Cpp/il2cpp_dump.h"
 #include "Includes/config.h"
 #include "Includes/log.h"
-
+#include <errno.h>
 // Глобальные переменные
 JavaVM* g_vm = nullptr;
 std::string GLOBAL_CACHE_DIR = "";
 const std::string MOD_BASE_PATH = "/storage/emulated/0/Documents/LibL";
 
 
+bool isLibraryLoaded(const char *libraryName) {
+    char line[512] = {0};
+    FILE *fp = fopen("/proc/self/maps", "rt");
+    if (fp != nullptr) {
+        while (fgets(line, sizeof(line), fp)) {
+            if (strstr(line, libraryName)) {
+                fclose(fp);
+                return true;
+            }
+        }
+        fclose(fp);
+    }
+    return false;
+}
+
+
+
+// --- Функция рекурсивного создания папок (аналог Java mkdirs) ---
+void recursive_mkdir(std::string path) {
+    std::string current_level = "";
+    std::string level;
+    std::stringstream ss(path);
+
+    // Разбираем путь по слешам и создаем уровни по очереди
+    while (std::getline(ss, level, '/')) {
+        if (level.empty()) {
+            current_level += "/";
+            continue;
+        }
+        current_level += level + "/";
+        if (mkdir(current_level.c_str(), 0777) != 0) {
+            if (errno != EEXIST) {
+                // Если ошибка не "уже существует", логируем
+                // LOGE("Ошибка создания директории %s: %s", current_level.c_str(), strerror(errno));
+            }
+        }
+    }
+}
 
 void loadExtraLibraries() {
     // Путь к нативным библиотекам приложения
@@ -146,6 +184,14 @@ void initSnityModLoader(std::string pkgName) {
 #endif
 
     std::string libDir = MOD_BASE_PATH + "/" + pkgName + "/lib/" + arch;
+    // Формируем полный путь к папке с модами на SD
+   // std::string fullModPath = MOD_BASE_PATH + "/" + pkgName + "/lib/" + arch;
+    
+    // !!! АВТОМАТИЧЕСКОЕ СОЗДАНИЕ ПАПОК !!!
+    LOGI("[SNITY] Проверка структуры папок: %s", libDir.c_str());
+    recursive_mkdir(libDir);
+
+    
     std::string pidStr = std::to_string(getpid());
 
     DIR* dir = opendir(libDir.c_str());
@@ -168,20 +214,7 @@ void initSnityModLoader(std::string pkgName) {
 }
 
 // --- Поток сканирования карт памяти и дампа ---
-bool isLibraryLoaded(const char *libraryName) {
-    char line[512] = {0};
-    FILE *fp = fopen("/proc/self/maps", "rt");
-    if (fp != nullptr) {
-        while (fgets(line, sizeof(line), fp)) {
-            if (strstr(line, libraryName)) {
-                fclose(fp);
-                return true;
-            }
-        }
-        fclose(fp);
-    }
-    return false;
-}
+
 
 void dump_thread() {
     std::string pkgName = GetPackageName();
