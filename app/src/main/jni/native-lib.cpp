@@ -116,15 +116,27 @@ void loadExtraLibraries() {
 // --- Получение динамического пути кэша (важно для System.load в виртуалке) ---
 std::string get_virtual_cache_dir(JNIEnv* env) {
     if (!env) return "";
+    
     jclass activityThread = env->FindClass("android/app/ActivityThread");
-    if (!activityThread) return "";
     jmethodID currentAppMethod = env->GetStaticMethodID(activityThread, "currentApplication", "()Landroid/app/Application;");
-    jobject appObj = env->CallStaticObjectMethod(activityThread, currentAppMethod);
-    if (!appObj) return "";
+    
+    // Пробуем получить Application в цикле, если он еще не готов
+    jobject appObj = nullptr;
+    for (int i = 0; i < 10; i++) {
+        appObj = env->CallStaticObjectMethod(activityThread, currentAppMethod);
+        if (appObj) break;
+        usleep(200000); // Спим 200мс и пробуем снова
+    }
+
+    if (!appObj) {
+        LOGE("[SNITY] ActivityThread.currentApplication() is NULL after timeout!");
+        return "";
+    }
 
     jclass contextClass = env->FindClass("android/content/Context");
     jmethodID getCacheDirMethod = env->GetMethodID(contextClass, "getCacheDir", "()Ljava/io/File;");
     jobject cacheDirFile = env->CallObjectMethod(appObj, getCacheDirMethod);
+    if (!cacheDirFile) return "";
 
     jclass fileClass = env->FindClass("java/io/File");
     jmethodID getAbsolutePathMethod = env->GetMethodID(fileClass, "getAbsolutePath", "()Ljava/lang/String;");
@@ -135,6 +147,7 @@ std::string get_virtual_cache_dir(JNIEnv* env) {
     env->ReleaseStringUTFChars(pathString, pathChars);
     return path;
 }
+
 
 // --- Инструментарий ModLoader ---
 bool snityCopyFile(const std::string& src, const std::string& dst) {
@@ -163,14 +176,22 @@ void clearSnityCache(const std::string& cachePath) {
 
 void initSnityModLoader(std::string pkgName) {
     // В режиме System.load g_vm уже инициализирован в JNI_OnLoad
-    if (GLOBAL_CACHE_DIR.empty() && g_vm) {
-        JNIEnv* env = nullptr;
-        g_vm->AttachCurrentThread(&env, nullptr);
-        GLOBAL_CACHE_DIR = get_virtual_cache_dir(env);
+       int retry = 0;
+    while (GLOBAL_CACHE_DIR.empty() && retry < 50) {
+        if (g_vm) {
+            JNIEnv* env = nullptr;
+            if (g_vm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+                GLOBAL_CACHE_DIR = get_virtual_cache_dir(env);
+                // g_vm->DetachCurrentThread(); // Не отключаем, если планируем JNI дальше
+            }
+        }
+        if (!GLOBAL_CACHE_DIR.empty()) break;
+        usleep(500000); // Спим 0.5 сек
+        retry++;
     }
 
     if (GLOBAL_CACHE_DIR.empty()) {
-        LOGE("[SNITY] Critical Error: Cache path detection failed!");
+        LOGE("[SNITY] Critical Error: Cache path detection failed after retries!");
         return;
     }
 
@@ -311,6 +332,8 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
 
 __attribute__((constructor))
 void lib_main() {
-    std::thread(dump_thread).detach();
+    if (!g_vm) {
+        std::thread(dump_thread).detach();
+    };
 }
 #endif
