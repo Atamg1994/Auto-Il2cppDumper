@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <sys/system_properties.h>
 #include <fstream>
+#include <algorithm> // Важно для парсера (std::remove)												  
 
 // --- FRIDA GUMJS INCLUDES ---
 #include "frida/include/frida-gumjs.h"
@@ -16,28 +17,37 @@
 #include "Includes/config.h"
 #include "Includes/log.h"
 
-// Глобальные переменные для Frida
+
+// Глобальные переменные
 static GumScriptBackend *snity_backend = nullptr;
 static GumScript *snity_script = nullptr;
 static long last_js_mtime = 0;
 static std::string global_script_path = "";
-// Добавь эти переменные в начало
+
 static bool config_on_change_reload = false;
 static bool config_on_load_wait = false;
-static std::string config_runtime = "qjs"; 
+static std::string config_runtime = "qjs";
+static bool snity_ready = false; // Флаг для синхронизации on_load: wait
 
+// --- НАДЕЖНЫЙ ПАРСЕР КОНФИГА (игнорирует пробелы и переносы) ---
+std::string get_cfg_value_safe(std::string content, std::string key) {
+    // Чистим контент от мусора (пробелы, табы, переносы), чтобы поиск не ломался
+    content.erase(std::remove(content.begin(), content.end(), ' '), content.end());
+    content.erase(std::remove(content.begin(), content.end(), '\t'), content.end());
+    content.erase(std::remove(content.begin(), content.end(), '\n'), content.end());
+    content.erase(std::remove(content.begin(), content.end(), '\r'), content.end());
 
+    std::string search = "\"" + key + "\":\"";
+												   
 
-// --- БЛОК ЛОГИКИ FRIDA (SNITY LITE) ---
-
-// Парсер конфига (ищет "path":"..." в текстовом файле)
-std::string get_config_value(const std::string& content, const std::string& key) {
-    size_t pos = content.find("\"" + key + "\"");
+											
+																				  
+    size_t pos = content.find(search);
     if (pos == std::string::npos) return "";
-    pos = content.find(":", pos);
-    size_t start = content.find("\"", pos) + 1;
+								 
+    size_t start = pos + search.length();
     size_t end = content.find("\"", start);
-    if (start == 0 || end == std::string::npos) return "";
+														  
     return content.substr(start, end - start);
 }
 
@@ -70,79 +80,86 @@ void reload_snity_js() {
     }
 }
 
-// Поток мониторинга конфига и скрипта
+// Поток мониторинга
 void snity_monitor_thread(std::string config_path) {
-    LOGI("SNITY: Reading config...");
+    LOGI("SNITY: Opening config: %s", config_path.c_str());
     
-    // 1. ПЕРВИЧНОЕ ЧТЕНИЕ КОНФИГА
+														
     std::ifstream c(config_path);
     if (c.is_open()) {
         std::string content((std::istreambuf_iterator<char>(c)), std::istreambuf_iterator<char>());
-        global_script_path = get_config_value(content, "path");
-        config_runtime = get_config_value(content, "runtime");
-        if (config_runtime.empty()) config_runtime = "qjs";
-        
-        if (content.find("\"on_change\":\"reload\"") != std::string::npos) config_on_change_reload = true;
-        if (content.find("\"on_load\":\"wait\"") != std::string::npos) config_on_load_wait = true;
         c.close();
+
+        global_script_path = get_cfg_value_safe(content, "path");
+        config_runtime = get_cfg_value_safe(content, "runtime");
+        
+        // Поиск флагов без учета пробелов
+        std::string clean = content;
+        clean.erase(std::remove(clean.begin(), clean.end(), ' '), clean.end());
+        
+        if (clean.find("\"on_change\":\"reload\"") != std::string::npos) config_on_change_reload = true;
+        if (clean.find("\"on_load\":\"wait\"") != std::string::npos) config_on_load_wait = true;
+				  
     }
 
     gum_init_embedded();
     
-    // ВЫБОР ДВИЖКА (v8 или qjs)
+											  
     if (config_runtime == "v8") {
-        LOGI("SNITY: Using V8 runtime");
+										
         snity_backend = gum_script_backend_obtain_v8();
     } else {
-        LOGI("SNITY: Using QuickJS runtime");
+											 
         snity_backend = gum_script_backend_obtain_qjs();
     }
 
-    // Первый запуск
+    // Загружаем скрипт ПЕРВЫМ
     reload_snity_js();
 
-    // Если on_load: wait, здесь можно было бы поставить флаг готовности, 
-    // но в нашей структуре мы просто продолжаем.
+    // Сигнализируем о готовности
+    snity_ready = true;
+    LOGI("SNITY: Initialization finished (wait: %d)", config_on_load_wait);
 
-    // ЦИКЛ ПЕРЕЗАГРУЗКИ (on_change: reload)
+    // Цикл релоада
     while (config_on_change_reload) {
+        sleep(3);
         reload_snity_js();
-        sleep(3); 
+				  
     }
 }
 
-// Поиск пути к конфигу рядом с текущей .so
+// Поиск конфига (поддерживает .unityconfig.so / .unityconfig.json и т.д.)
 
 
 std::string find_my_config_path() {
     Dl_info info;
     if (dladdr((void*)find_my_config_path, &info) && info.dli_fname) {
-        std::string self_path = info.dli_fname; // Полный путь к нашей либе
-        
-        // 1. Получаем директорию, где лежит либа
+        std::string self_path = info.dli_fname;
+		
+										
         size_t last_slash = self_path.find_last_of("/");
-        if (last_slash == std::string::npos) return "";
+													   
         std::string lib_dir = self_path.substr(0, last_slash);
-        
-        // 2. Получаем имя нашей либы без пути (например, libil2cppdumper.so)
+		
+																												
         std::string lib_name = self_path.substr(last_slash + 1);
-        
-        // 3. Отрезаем расширение .so, чтобы получить чистую базу (libil2cppdumper)
+		
+																															
         size_t last_dot = lib_name.find_last_of(".");
         std::string base_name = (last_dot != std::string::npos) ? lib_name.substr(0, last_dot) : lib_name;
 
-        // 4. Ищем в этой папке любой файл, начинающийся на "base_name.unityconfig"
+																														
         DIR* dir = opendir(lib_dir.c_str());
         if (dir) {
             struct dirent* entry;
             while ((entry = readdir(dir)) != nullptr) {
                 std::string fname = entry->d_name;
-                // Ищем совпадение: libil2cppdumper.unityconfig
+									   
                 if (fname.find(base_name + ".unityconfig") == 0) {
-                    std::string full_cfg_path = lib_dir + "/" + fname;
+                    std::string res = lib_dir + "/" + fname;
                     closedir(dir);
-                    LOGI("SNITY: Found config: %s", full_cfg_path.c_str());
-                    return full_cfg_path;
+																												
+                    return res;
                 }
             }
             closedir(dir);
@@ -218,10 +235,27 @@ void dump_thread() {
     LOGI("Lib loaded - SNITY active");
     
     // --- Инициализация Frida (Snity) ---
-    std::string cfg_path = find_my_config_path();
-    if (!cfg_path.empty()) {
-        std::thread(snity_monitor_thread, cfg_path).detach();
-    }
+    std::string cfg = find_my_config_path();
+    if (!cfg.empty()) {
+	  LOGI("Scanning directory for 'Load' libraries: %s", cfg.c_str());
+        std::thread(snity_monitor_thread, cfg).detach();
+
+        // РЕАЛИЗАЦИЯ ON_LOAD: WAIT
+        // Если флаг wait включен, поток дампа замирает до готовности JS
+        // Проверяем флаг wait через короткую паузу, так как он читается в мониторе
+        usleep(200000); // Даем монитору 0.2с прочитать конфиг
+        
+        if (config_on_load_wait) {
+            LOGI("SNITY: Waiting for JS to load...");
+            while (!snity_ready) {
+                usleep(10000); // 10ms
+            }
+            LOGI("SNITY: JS ready, resuming dump_thread");
+        }
+    }else {
+		
+    LOGI("Lib loaded - SNITY find_my_config_path false");
+	}
 
     // --- Оригинальная логика загрузки ---
     loadExtraLibraries();
