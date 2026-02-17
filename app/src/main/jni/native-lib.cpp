@@ -18,6 +18,11 @@
 #include "Includes/log.h"
 #include <sys/mman.h>
 
+#include <android/fdsan.h> // нужен для android_fdsan_set_error_level
+#include <signal.h>
+
+
+// Функция для отключения проверки дескрипторов
 
 
 // Глобальные переменные
@@ -82,6 +87,26 @@ void reload_snity_js() {
     }
 }
 
+
+void silence_signals() {
+    // Запрещаем приложению реагировать на сигнал 35, который мы видели в логе
+    signal(35, SIG_IGN); 
+}
+
+
+void disable_fdsan() {
+    // Получаем указатель на функцию (она есть в Android 10+)
+    void* lib = dlopen("libc.so", RTLD_NOW);
+    if (lib) {
+        auto set_error_level = (void (*)(enum android_fdsan_error_level))dlsym(lib, "android_fdsan_set_error_level");
+        if (set_error_level) {
+            // Устанавливаем уровень ошибок в "ничего не делать"
+            set_error_level(ANDROID_FDSAN_ERROR_LEVEL_DISABLED);
+            LOGI("SNITY: fdsan DISABLED to bypass PairIP conflict");
+        }
+        dlclose(lib);
+    }
+}
 void patch_exit() {
     void* exit_addr = dlsym(RTLD_DEFAULT, "exit");
     if (exit_addr) {
@@ -123,6 +148,8 @@ void snity_monitor_thread(std::string config_path) {
     LOGI("SNITY: Opening config: %s", config_path.c_str());
     sleep(20); 
 	patch_exit(); 
+	disable_fdsan();
+	silence_signals();
 	LOGI("SNITY: Opening configinit: %s", config_path.c_str());													
     std::ifstream c(config_path);
     if (c.is_open()) {
@@ -298,19 +325,6 @@ void dump_thread() {
 	}
 
 
-
-    do {
-        sleep(1);
-    } while (!isLibraryLoaded(libTarget));
-
-    LOGI("Waiting in %d...", Sleep);
-    sleep(Sleep);
-
-    auto il2cpp_handle = dlopen(libTarget, 4);
- //   LOGI("Start dumping");
-
-    auto androidDataPath = std::string("/storage/emulated/0/Android/data/").append(
-            GetPackageName()).append("/").append(GetPackageName()).append("-dump.cs");
 
    // il2cpp_api_init(il2cpp_handle);
    // il2cpp_dump(androidDataPath.c_str());
