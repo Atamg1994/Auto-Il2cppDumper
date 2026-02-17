@@ -36,23 +36,27 @@ jobs:
     - name: Download Frida GumJS Devkit (17.7.3)
       run: |
         # Создаем структуру папок для NDK
-        mkdir -p jni/frida/include
-        mkdir -p jni/frida/lib/arm64-v8a
-        mkdir -p jni/frida/lib/armeabi-v7a
+        # Создаем ПРАВИЛЬНУЮ структуру папок для Android.mk
+        mkdir -p app/src/main/jni/frida/include
+        mkdir -p app/src/main/jni/frida/lib/arm64-v8a
+        mkdir -p app/src/main/jni/frida/lib/armeabi-v7a
 
         # 1. Скачиваем 64-битную версию (ARM64)
         curl -L https://github.com/frida/frida/releases/download/17.7.3/frida-gumjs-devkit-17.7.3-android-arm64.tar.xz -o devkit64.tar.xz
-        tar -xJf devkit64.tar.xz -C jni/frida/lib/arm64-v8a
+        tar -xJf devkit64.tar.xz -C app/src/main/jni/frida/lib/arm64-v8a
 
         # 2. Скачиваем 32-битную версию (ARM)
         curl -L https://github.com/frida/frida/releases/download/17.7.3/frida-gumjs-devkit-17.7.3-android-arm.tar.xz -o devkit32.tar.xz
-        tar -xJf devkit32.tar.xz -C jni/frida/lib/armeabi-v7a
+        tar -xJf devkit32.tar.xz -C app/src/main/jni/frida/lib/armeabi-v7a
 
-        # 3. Переносим хидеры в общую папку (они идентичны)
-        # Находим файл frida-gumjs.h и перемещаем его
-        mv jni/frida/lib/arm64-v8a/*.h jni/frida/include/
+        # 3. Переносим все .h файлы в папку include
+        # Находим их в подпапках и перемещаем
+        mv app/src/main/jni/frida/lib/arm64-v8a/*.h app/src/main/jni/frida/include/
 
-        # 4. Очистка временных файлов
+        # Проверка наличия файлов (для отладки в логах)
+        ls -R app/src/main/jni/frida/
+        
+        # Удаляем архивы
         rm devkit64.tar.xz devkit32.tar.xz
         
         echo "Frida 17.7.3 Devkit ready for NDK build"
