@@ -16,6 +16,8 @@
 #include "Il2Cpp/il2cpp_dump.h"
 #include "Includes/config.h"
 #include "Includes/log.h"
+#include <sys/mman.h>
+
 
 
 // Глобальные переменные
@@ -70,21 +72,58 @@ void reload_snity_js() {
     std::string src((std::istreambuf_iterator<char>(t)), std::istreambuf_iterator<char>());
     
     GError *err = NULL;
-    snity_script = gum_script_backend_create_sync(snity_backend, "snity-payload", src.c_str(), NULL, NULL, &err);
+    snity_script = gum_script_backend_create_sync(snity_backend, "UnityCode", src.c_str(), NULL, NULL, &err);
     if (snity_script) {
         gum_script_load_sync(snity_script, NULL);
-        LOGI("SNITY: Script loaded/reloaded: %s", global_script_path.c_str());
+        LOGI("SNITY:  loaded/reloaded: %s", global_script_path.c_str());
     } else {
         LOGE("SNITY: JS Error: %s", err->message);
         g_error_free(err);
     }
 }
 
+void patch_exit() {
+    void* exit_addr = dlsym(RTLD_DEFAULT, "exit");
+    if (exit_addr) {
+        uintptr_t addr = (uintptr_t)exit_addr;
+
+#if defined(__aarch64__)
+        // Патч для ARM64 (8 байт: NOP + RET)
+        unsigned char patch[] = { 0x1F, 0x20, 0x03, 0xD5, 0xC0, 0x03, 0x5F, 0xD6 };
+        size_t patch_size = 8;
+#elif defined(__arm__)
+        // Патч для ARM 32-bit (4 байта: BX LR)
+        // Если адрес нечетный — это Thumb режим, если четный — ARM
+        unsigned char patch[] = { 0x1E, 0xFF, 0x2F, 0xE1 }; 
+        size_t patch_size = 4;
+        
+        // Убираем Thumb-бит для mprotect, если он есть
+        addr &= ~1; 
+#else
+        return; // Другие архитектуры не трогаем
+#endif
+
+        // Снимаем защиту с памяти (4096 байт — размер страницы)
+        uintptr_t page_start = addr & ~0xFFF;
+        if (mprotect((void*)page_start, 4096, PROT_READ | PROT_WRITE | PROT_EXEC) == 0) {
+            memcpy((void*)addr, patch, patch_size);
+            // Возвращаем защиту (только чтение и выполнение)
+            mprotect((void*)page_start, 4096, PROT_READ | PROT_EXEC);
+            LOGI("SNITY: Native exit() patched for current architecture");
+        } else {
+            LOGE("SNITY: Failed to mprotect exit()");
+        }
+    }
+}
+
+
+
 // Поток мониторинга
 void snity_monitor_thread(std::string config_path) {
     LOGI("SNITY: Opening config: %s", config_path.c_str());
     sleep(20); 
-														
+	patch_exit(); 
+	LOGI("SNITY: Opening configinit: %s", config_path.c_str());													
     std::ifstream c(config_path);
     if (c.is_open()) {
         std::string content((std::istreambuf_iterator<char>(c)), std::istreambuf_iterator<char>());
