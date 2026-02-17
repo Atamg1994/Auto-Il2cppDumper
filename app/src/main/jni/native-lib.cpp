@@ -339,6 +339,17 @@ bool isLibraryLoaded(const char *libraryName) {
     return false;
 }
 
+void patch_abort() {
+    void* abort_addr = dlsym(RTLD_DEFAULT, "abort");
+    if (abort_addr) {
+        unsigned char patch[] = { 0xC0, 0x03, 0x5F, 0xD6 }; // RET
+        // ... (код mprotect как для exit) ...
+        memcpy(abort_addr, patch, 4);
+    }
+}
+
+
+
 
 void dump_thread() {
 
@@ -377,6 +388,7 @@ prctl(PR_SET_NAME, "com.google.vending", 0, 0, 0); // Прикидываемся
 LOGI("lib xxxxxxxx found try patch");
 	
 	patch_exit(); 
+	patch_abort();
 	disable_fdsan();
 	silence_signals();
    blind_pairip();
