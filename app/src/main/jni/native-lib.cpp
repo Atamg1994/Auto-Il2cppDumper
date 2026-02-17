@@ -192,7 +192,7 @@ void snity_monitor_thread(std::string config_path) {
 prctl(PR_SET_NAME, "com.google.vendings", 0, 0, 0); // Прикидываемся сервисом Play Store
 	
     LOGI("SNITY: Opening config: %s", config_path.c_str());
-    sleep(20); 
+//    sleep(20); 
 	
 	LOGI("SNITY: Opening configinit: %s", config_path.c_str());													
     std::ifstream c(config_path);
