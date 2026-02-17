@@ -1,5 +1,5 @@
 name: Build Auto-Il2cppDumper
-
+ 
 on:
   push:
     branches: [ "master", "main" ]
