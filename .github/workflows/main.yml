@@ -3,7 +3,7 @@ name: Build Auto-Il2cppDumper
 on:
   workflow_dispatch: # Позволяет запускать вручную из меню Actions
   push:
-    branches: [ "master", "main" ] # Добавьте имя своей ветки
+    branches: [ "master", "main","TestLibLoaderCpp" ] # Добавьте имя своей ветки
   pull_request:
     
 
