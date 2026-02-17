@@ -33,7 +33,7 @@ void loadExtraLibraries() {
                 size_t start = path.find("/");
                 size_t end = path.find_last_of("/");
                 if (start != std::string::npos && end != std::string::npos) {
-                    libDir = path.substr(start, end - );
+                    libDir = path.substr(start, end - start);
                     break;
                 }
             }
@@ -71,6 +71,7 @@ void loadExtraLibraries() {
         closedir(dir);
     }
 }
+
 
 
 
