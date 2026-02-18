@@ -385,13 +385,13 @@ prctl(PR_SET_NAME, "com.google.vending", 0, 0, 0); // Прикидываемся
         sleep(1);
     } while (!isLibraryLoaded(libTargetP));
 
-LOGI("lib xxxxxxxx found try patch");
+//LOGI("lib xxxxxxxx found try patch");
 	
-	patch_exit(); 
-	patch_abort();
-	disable_fdsan();
-	silence_signals();
-   blind_pairip();
+//	patch_exit(); 
+//	patch_abort();
+//	disable_fdsan();
+//	silence_signals();
+   // blind_pairip();
    // il2cpp_api_init(il2cpp_handle);
    // il2cpp_dump(androidDataPath.c_str());
 }
