@@ -32,7 +32,7 @@
 
 
 #define libTarget "libil2cpp.so"
-#define libTargetP "libpairipcore.so"
+//#define libTargetP "libpairipcore.so"
 // Глобальные переменные
 static GumScriptBackend *snity_backend = nullptr;
 static GumScript *snity_script = nullptr;
@@ -381,9 +381,9 @@ prctl(PR_SET_NAME, "com.google.vending", 0, 0, 0); // Прикидываемся
     LOGI("Lib loaded - SNITY find_my_config_path false");
 	}
 
-    do {
-        sleep(1);
-    } while (!isLibraryLoaded(libTargetP));
+//    do {
+   //     sleep(1);
+//    } while (!isLibraryLoaded(libTargetP));
 
 //LOGI("lib xxxxxxxx found try patch");
 	
