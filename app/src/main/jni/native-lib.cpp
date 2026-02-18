@@ -147,8 +147,9 @@ void dump_thread() {
     auto androidDataPath = std::string("/storage/emulated/0/Android/data/").append(
             GetPackageName()).append("/").append(GetPackageName()).append("-dump.cs");
 
-    il2cpp_api_init(il2cpp_handle);
+    if(il2cpp_api_init(il2cpp_handle)){
     il2cpp_dump(androidDataPath.c_str());
+    }
 }
 
 void *pLibRealUnity = 0;
