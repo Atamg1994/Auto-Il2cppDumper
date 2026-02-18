@@ -4,15 +4,31 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #include <dirent.h>
-#include <sys/system_properties.h>
+#include <sys/stat.h>
+#include <fstream>
+#include <sstream>
 #include "Il2Cpp/il2cpp_dump.h"
 #include "Includes/config.h"
 #include "Includes/log.h"
+#include "Includes/jni_bind_release.h"
 
-// Функция для поиска и загрузки сторонних библиотек с "Load" в имени
-#include <thread>
-#include <string>
-#include <vector>
+using namespace jni;
+
+// --- Глобальные данные ---
+JavaVM* g_vm_global = nullptr;
+std::string GLOBAL_CACHE_DIR = "";
+std::string GLOBAL_PKG_NAME = "";
+const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
+
+// --- Описание Java классов для JNI-Bind ---
+static constexpr Class kFile{"java/io/File", Method{"getAbsolutePath", Return<jstring>{}, Args{}}};
+static constexpr Class kContext{"android/content/Context", 
+    Method{"getCacheDir", Return{kFile}, Args{}}, 
+    Method{"getPackageName", Return<jstring>{}, Args{}}
+};
+static constexpr Class kActivityThread{"android/app/ActivityThread", 
+    StaticMethod{"currentApplication", Return{"android/app/Application"}, Args{}}
+};
 
 
 bool isLibraryLoaded(const char *libraryName) {
@@ -29,182 +45,167 @@ bool isLibraryLoaded(const char *libraryName) {
     }
     return false;
 }
-// Функция-воркер для ожидания конкретной либы и последующей загрузки
-void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string fileName) {
-    LOGI("Thread started: waiting for %s to load %s", targetLib.c_str(), fileName.c_str());
+
+// --- Вспомогательные функции ---
+
+void recursive_mkdir(std::string path) {
+    std::stringstream ss(path);
+    std::string item, current_path = "";
+    while (std::getline(ss, item, '/')) {
+        if (item.empty()) { current_path += "/"; continue; }
+        current_path += item + "/";
+        mkdir(current_path.c_str(), 0777);
+    }
+}
+
+bool copyFile(const std::string& src, const std::string& dst) {
+    std::ifstream source(src, std::ios::binary);
+    std::ofstream dest(dst, std::ios::binary);
+    if (!source.is_open() || !dest.is_open()) return false;
+    dest << source.rdbuf();
+    chmod(dst.c_str(), 0755);
+    return true;
+}
+
+// Получение путей через JNI-Bind (специально для виртуалки)
+void init_virtual_paths(JNIEnv* env) {
+    JvmRef<kDefaultJvm> jvm{g_vm_global};
+    LocalContext ctx{env};
     
-    // Ждем, пока целевая библиотека появится в памяти
-    while (!isLibraryLoaded(targetLib.c_str())) {
-        usleep(500000); // 200мс
+    auto app = Class<kActivityThread>::CallStatic("currentApplication");
+    int retry = 0;
+    while (!app && retry < 50) { // Ожидание инициализации Application в GSpace
+        usleep(200000);
+        app = Class<kActivityThread>::CallStatic("currentApplication");
+        retry++;
     }
 
-    LOGI("Target %s detected! Loading %s now...", targetLib.c_str(), fileName.c_str());
+    if (app) {
+        GLOBAL_PKG_NAME = app.Call(kContext, "getPackageName");
+        LocalObject<kFile> cacheFile = app.Call(kContext, "getCacheDir");
+        GLOBAL_CACHE_DIR = cacheFile.Call(kFile, "getAbsolutePath");
+        LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
+        LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
+    }
+}
+
+// Универсальная загрузка (как изнутри, так и снаружи)
+void processAndLoad(std::string fullPath, std::string fileName, bool isExternal) {
+    std::string finalPath = fullPath;
     
-    void* handle = dlopen(fullPath.c_str(), RTLD_NOW);
-    if (handle) {
-        LOGI("Successfully loaded (Delayed): %s", fileName.c_str());
-    } else {
-        LOGE("Failed to load %s: %s", fileName.c_str(), dlerror());
+    if (isExternal) {
+        finalPath = GLOBAL_CACHE_DIR + "/" + fileName;
+        if (!copyFile(fullPath, finalPath)) {
+            LOGE("Copy failed: %s", fileName.c_str());
+            return;
+        }
+    }
+
+    if (fileName.find("libWL_") == 0) {
+        size_t first = fileName.find("_"), second = fileName.find("_", first + 1);
+        if (first != std::string::npos && second != std::string::npos) {
+            std::string target = fileName.substr(first + 1, second - first - 1);
+            std::thread(waitAndLoadWorker, finalPath, target, fileName).detach();
+        }
+    } else if (fileName.find("Load") != std::string::npos) {
+        void* h = dlopen(finalPath.c_str(), RTLD_NOW);
+        if (h) LOGI("Loaded: %s", fileName.c_str());
+        else LOGE("Load Error %s: %s", fileName.c_str(), dlerror());
     }
 }
 
 void loadExtraLibraries() {
-    char line[512];
-    std::string libDir = "";
+    // 1. Внутреннее сканирование (как раньше)
+    char line[512]; std::string libDir = "";
     FILE *fp = fopen("/proc/self/maps", "rt");
     if (fp) {
         while (fgets(line, sizeof(line), fp)) {
             if (strstr(line, "/lib/") && strstr(line, ".so")) {
                 std::string path = line;
-                size_t start = path.find("/");
-                size_t end = path.find_last_of("/");
-                if (start != std::string::npos && end != std::string::npos) {
-                    libDir = path.substr(start, end - start);
-                    break;
-                }
+                size_t s = path.find("/"), e = path.find_last_of("/");
+                libDir = path.substr(s, e - s); break;
             }
         }
         fclose(fp);
     }
 
-    if (libDir.empty()) {
-        LOGE("Could not find library directory");
-        return;
+    if (!libDir.empty()) {
+        DIR* dir = opendir(libDir.c_str());
+        if (dir) {
+            struct dirent* entry;
+            while ((entry = readdir(dir)) != nullptr) {
+                if (strstr(entry->d_name, "native-lib") || !strstr(entry->d_name, ".so")) continue;
+                processAndLoad(libDir + "/" + entry->d_name, entry->d_name, false);
+            }
+            closedir(dir);
+        }
     }
 
-    LOGI("Scanning directory: %s", libDir.c_str());
+    // 2. Внешнее сканирование (SDCard -> Cache -> Load)
+#if defined(__aarch64__)
+    std::string arch = "arm64-v8a";
+#else
+    std::string arch = "armeabi-v7a";
+#endif
 
-    DIR* dir = opendir(libDir.c_str());
-    if (dir) {
+    std::string extPath = SD_ROOT + "/" + GLOBAL_PKG_NAME + "/lib/" + arch;
+    recursive_mkdir(extPath);
+    
+    DIR* edir = opendir(extPath.c_str());
+    if (edir) {
         struct dirent* entry;
-        while ((entry = readdir(dir)) != nullptr) {
-            std::string fileName = entry->d_name;
-
-            // Игнорируем себя
-            if (fileName.find("native-lib") != std::string::npos) continue;
-            if (fileName.find(".so") == std::string::npos) continue;
-
-            std::string fullPath = libDir + "/" + fileName;
-
-            // ВАРИАНТ 1: Ожидание (libWL_цель.so_название.so)
-            if (fileName.find("libWL_") == 0) {
-                size_t firstUnder = fileName.find("_");
-                size_t secondUnder = fileName.find("_", firstUnder + 1);
-
-                if (firstUnder != std::string::npos && secondUnder != std::string::npos) {
-                    // Извлекаем "libil2cpp.so" из "libWL_libil2cpp.so_Mod.so"
-                    std::string targetLib = fileName.substr(firstUnder + 1, secondUnder - firstUnder - 1);
-                    
-                    // Запускаем ожидание в отдельном потоке, чтобы не блокировать поиск других файлов
-                    std::thread(waitAndLoadWorker, fullPath, targetLib, fileName).detach();
-                    continue; 
-                }
-            }
-
-            // ВАРИАНТ 2: Обычная немедленная загрузка (просто "Load" в имени)
-            if (fileName.find("Load") != std::string::npos) {
-                LOGI("Immediate load: %s", fileName.c_str());
-                void* handle = dlopen(fullPath.c_str(), RTLD_NOW);
-                if (handle) {
-                    LOGI("Successfully loaded: %s", fileName.c_str());
-                } else {
-                    LOGE("Failed to load %s: %s", fileName.c_str(), dlerror());
-                }
-            }
+        while ((entry = readdir(edir)) != nullptr) {
+            if (!strstr(entry->d_name, ".so")) continue;
+            processAndLoad(extPath + "/" + entry->d_name, entry->d_name, true);
         }
-        closedir(dir);
+        closedir(edir);
     }
 }
-
-
-
-
-
-
-
-
-
-
-
 #define libTarget "libil2cpp.so"
-
 void dump_thread() {
-    LOGI("Lib loaded");
+    JNIEnv* env;
+		LOGI("[SoLoader] AttachCurrentThread.");
+    g_vm_global->AttachCurrentThread(&env, nullptr);
+		LOGI("[SoLoader] AttachCurrentThread ok.");
     
-    // Сначала загружаем доп. библиотеки, если они есть
+    init_virtual_paths(env);
     loadExtraLibraries();
-
+	bool dump = true;
     int timeout = 120; // Лимит в секундах
     int elapsed = 0;
-
-   do {
-    if (elapsed >= timeout) {
-        LOGI("Timeout reached: %s not found. Killing thread.", libTarget);
-        return; // Завершаем выполнение функции
-    }
-       sleep(1);
-      elapsed++;
-   } while (!isLibraryLoaded(libTarget));
-
-
-    LOGI("Waiting in %d...", Sleep);
+    do {
+          if (elapsed >= timeout) {
+                LOGI("[SoLoader] Timeout reached: %s not found. Killing thread.", libTarget);
+                dump = false;
+				back;
+          }
+          sleep(1);
+          elapsed++;
+    } while (!isLibraryLoaded(libTarget));
+	
     sleep(Sleep);
-
-    auto il2cpp_handle = dlopen(libTarget, 4);
-    LOGI("Start dumping");
-
-    auto androidDataPath = std::string("/storage/emulated/0/Android/data/").append(
-            GetPackageName()).append("/").append(GetPackageName()).append("-dump.cs");
-
-    if(il2cpp_api_init(il2cpp_handle)){
-    il2cpp_dump(androidDataPath.c_str());
-    }
+    if (dump) {
+    void* handle = dlopen(libTarget, RTLD_NOW);
+		if (handle) {
+			std::string androidDataPath = "/storage/emulated/0/Documents/" + GLOBAL_PKG_NAME + "-dump.cs";
+			LOGI("[SoLoader] Start dumping: %s:%s", GLOBAL_PKG_NAME.c_str(),androidDataPath.c_str());
+			if(il2cpp_api_init(il2cpp_handle)){
+			il2cpp_dump(androidDataPath.c_str());
+			}
+		}
+	}
+	LOGI("[SoLoader] DetachCurrentThread.");
+	    init_virtual_paths(env);
+	LOGI("[SoLoader] DetachCurrentThread.");
+    g_vm_global->DetachCurrentThread();
 }
 
-void *pLibRealUnity = 0;
-typedef jint(JNICALL *CallJNI_OnLoad_t)(JavaVM *vm, void *reserved);
-typedef void(JNICALL *CallJNI_OnUnload_t)(JavaVM *vm, void *reserved);
-CallJNI_OnLoad_t RealJNIOnLoad = 0;
-CallJNI_OnUnload_t RealJNIOnUnload = 0;
-
-#ifdef UseFakeLib
-
-JNIEXPORT jint JNICALL CallJNIOL(JavaVM *vm, void *reserved) {
-    LOGI("OnLoad called");
-    std::thread(dump_thread).detach();
-
-    if (!pLibRealUnity) pLibRealUnity = dlopen("librealmain.so", RTLD_NOW);
-    if (!pLibRealUnity) pLibRealUnity = dlopen("librealunity.so", RTLD_NOW);
-    
-    if (pLibRealUnity && !RealJNIOnLoad) {
-        RealJNIOnLoad = reinterpret_cast<CallJNI_OnLoad_t>(dlsym(pLibRealUnity, "JNI_OnLoad"));
-    }
-    
-    return (RealJNIOnLoad) ? RealJNIOnLoad(vm, reserved) : JNI_VERSION_1_6;
-}
-
-JNIEXPORT void JNICALL CallJNIUL(JavaVM *vm, void *reserved) {
-    LOGI("OnUnload called");
-    if (pLibRealUnity && !RealJNIOnUnload) {
-        RealJNIOnUnload = reinterpret_cast<CallJNI_OnUnload_t>(dlsym(pLibRealUnity, "JNI_OnUnload"));
-    }
-    if (RealJNIOnUnload) RealJNIOnUnload(vm, reserved);
-}
-
+// --- JNI Вход ---
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
-    LOGI("Initialize JNI");
-    return CallJNIOL(vm, reserved);
-}
-
-JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
-    LOGI("Unload JNI");
-    CallJNIUL(vm, reserved);
-}
-
-#else
-
-__attribute__((constructor))
-void lib_main() {
+    g_vm_global = vm;
+    LOGI("[SoLoader] JNI System Initialized");
     std::thread(dump_thread).detach();
+    return JNI_VERSION_1_6;
 }
-#endif
+
+
