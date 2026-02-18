@@ -149,7 +149,7 @@ void patch_exit() {
     }
 }
 
-
+/*
 void blind_pairip() {
     // 1. Ищем саму библиотеку защиты в памяти
     void* pairip_handle = xdl_open(libTargetP, XDL_DEFAULT);
@@ -185,7 +185,7 @@ void blind_pairip() {
     }
 }
 
-
+*/
 
 // Поток мониторинга
 void snity_monitor_thread(std::string config_path) {
