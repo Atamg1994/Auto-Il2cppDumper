@@ -10,7 +10,7 @@ include $(PREBUILT_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE    := il2cppdumper
+LOCAL_MODULE    := LoadModCore
 
 LOCAL_CFLAGS := -Wno-error=format-security -fvisibility=hidden -ffunction-sections -fdata-sections -w
 LOCAL_CFLAGS += -fno-rtti -fno-exceptions -fpermissive
