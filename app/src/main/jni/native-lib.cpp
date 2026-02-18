@@ -134,9 +134,18 @@ void dump_thread() {
     // Сначала загружаем доп. библиотеки, если они есть
     loadExtraLibraries();
 
-    do {
-        sleep(1);
-    } while (!isLibraryLoaded(libTarget));
+    int timeout = 120; // Лимит в секундах
+    int elapsed = 0;
+
+   do {
+    if (elapsed >= timeout) {
+        LOGI("Timeout reached: %s not found. Killing thread.", libTarget);
+        return; // Завершаем выполнение функции
+    }
+       sleep(1);
+      elapsed++;
+   } while (!isLibraryLoaded(libTarget));
+
 
     LOGI("Waiting in %d...", Sleep);
     sleep(Sleep);
