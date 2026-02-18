@@ -21,13 +21,16 @@ std::string GLOBAL_PKG_NAME = "";
 const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
 
 // --- Описание Java классов для JNI-Bind ---
-static constexpr Class kFile{"java/io/File", Method{"getAbsolutePath", Return<jstring>{}, Args{}}};
+// --- Описание Java классов (Исправленный синтаксис JNI-Bind) ---
+static constexpr Class kFile{"java/io/File", 
+    Method{"getAbsolutePath", Return<jstring>{}}
+};
 static constexpr Class kContext{"android/content/Context", 
-    Method{"getCacheDir", Return{kFile}, Args{}}, 
-    Method{"getPackageName", Return<jstring>{}, Args{}}
+    Method{"getCacheDir", Return{kFile}}, 
+    Method{"getPackageName", Return<jstring>{}}
 };
 static constexpr Class kActivityThread{"android/app/ActivityThread", 
-    StaticMethod{"currentApplication", Return{"android/app/Application"}, Args{}}
+    Method{"currentApplication", jni::Static, Return{"android/app/Application"}}
 };
 
 
