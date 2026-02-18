@@ -269,10 +269,10 @@ void dump_thread_v2() {
 
 // --- Поток сканирования карт памяти и дампа ---
 
-
+/*
 void dump_thread() {
     
-    pkgName = GetPackageName();
+   const std::string pkgName = GetPackageName();
     
     // Загружаем моды сразу после срабатывания System.load
     
@@ -298,7 +298,7 @@ void dump_thread() {
     }
 }
 
-
+*/
 // --- Точка входа System.load ---
 
 void *pLibRealUnity = 0;
@@ -369,7 +369,7 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
 __attribute__((constructor))
 void lib_main() {
     if (!g_vm) {
-        std::thread(dump_thread).detach();
+        std::thread(dump_thread_v2).detach();
     };
 }
 #endif
