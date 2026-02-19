@@ -28,21 +28,22 @@ const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
 		 
 // --- Описание Java классов ---
 // --- Описание Java классов ---
+// --- Описание Java классов (Под JniBind 1.0.0 Beta) ---
 static constexpr Class kFile{"java/io/File", 
-    Method{"getAbsolutePath", Return<jstring>{}}
+    Method{"getAbsolutePath", Return<jstring>{}, Params{}} // Добавлен Params{}
 };
 
 static constexpr Class kContext{"android/content/Context", 
-    Method{"getCacheDir", Return{kFile}}, 
-    Method{"getPackageName", Return<jstring>{}}
+    Method{"getCacheDir", Return{kFile}, Params{}}, 
+    Method{"getPackageName", Return<jstring>{}, Params{}} // Добавлен Params{}
 };
 
 static constexpr Class kActivityThread{"android/app/ActivityThread", 
     Static {
-        // Убрали угловые скобки у kContext
-        Method{"currentApplication", Return{kContext}} 
+        Method{"currentApplication", Return{kContext}, Params{}} // Добавлен Params{}
     }
 };
+
 
 
 
@@ -101,7 +102,7 @@ void init_virtual_paths(JNIEnv* env) {
     while (retry < 50) {
         // 1. Статические методы в JniBind 1.5.0 иногда требуют явного указания через Access
         // Если это не сработает, используем альтернативный синтаксис
-        auto app = kActivityThread.Access<"currentApplication">();
+        auto app = kActivityThread.template Call<"currentApplication">();
         
         if (app) {
             LocalObject<kContext> ctx{std::move(app)};
