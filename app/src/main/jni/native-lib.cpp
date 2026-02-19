@@ -249,7 +249,9 @@ void dump_thread() {
     JNIEnv* env;
     if (g_vm_global->AttachCurrentThread(&env, nullptr) != JNI_OK)
         return;
-
+    // ВОТ ЭТА СТРОКА: Инициализирует JniBind для этого потока
+    LOGI("[SoLoader] jni::ThreadGuard guard");
+    jni::ThreadGuard guard; 
     LOGI("[SoLoader] run dump_thread-> init_virtual_paths");
     init_virtual_paths(env);
 
