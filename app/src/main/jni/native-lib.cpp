@@ -99,23 +99,25 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
 // --- Получение путей через JNI-Bind ---
 
 void init_virtual_paths(JNIEnv* env) {
+
     int retry = 0;
 
     while (retry < 50) {
 
-        // ✅ ВАЖНО: без Access()
-       auto app = jni::LocalObject<kActivityThread>{}("currentApplication");
+        // ✅ Правильный static вызов для jni_bind_release
+        auto app = kActivityThread["currentApplication"]();
 
         if (app) {
-            LocalObject<kContext> ctx{std::move(app)};
 
-            auto pkgName = ctx("getPackageName");
+            jni::LocalObject<kContext> ctx{std::move(app)};
+
+            auto pkgName = ctx["getPackageName"]();
             GLOBAL_PKG_NAME = std::string{pkgName};
 
-            auto cacheFileObj = ctx("getCacheDir");
-            LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
+            auto cacheFileObj = ctx["getCacheDir"]();
+            jni::LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
 
-            auto pathString = cacheFile("getAbsolutePath");
+            auto pathString = cacheFile["getAbsolutePath"]();
             GLOBAL_CACHE_DIR = std::string{pathString};
 
             LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
@@ -127,6 +129,7 @@ void init_virtual_paths(JNIEnv* env) {
         retry++;
     }
 }
+
 
 void processAndLoad(std::string fullPath, std::string fileName, bool isExternal) {
     std::string finalPath = fullPath;
