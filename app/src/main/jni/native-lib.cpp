@@ -100,37 +100,48 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
 
 void init_virtual_paths(JNIEnv* env) {
     int retry = 0;
-
-    while (retry < 50) {
+    while (retry < 100) { // Увеличим количество попыток
+        // 1. Пытаемся получить доступ к статике
         auto activityThread = jni::StaticRef<kActivityThread>{};
-
-        // Получаем текущий Application как jobject
+        
+        // 2. Вызываем метод
         auto appJob = activityThread("currentApplication");
 
-// Явно приводим к jobject для сравнения с nullptr
-if (jobject{appJob} != nullptr) {
-    // Теперь оборачиваем в LocalObject для работы с методами Context
-    jni::LocalObject<kContext> app{std::move(appJob)};
+        // 3. Проверяем через явное приведение, что объект получен
+        if (static_cast<jobject>(appJob) != nullptr) {
+            jni::LocalObject<kContext> app{std::move(appJob)};
 
-            // Получаем имя пакета
-            jni::LocalString pkgName = app("getPackageName");
-            GLOBAL_PKG_NAME = pkgName.Pin().ToString();
+            // Проверяем имя пакета
+            auto pkgName = app("getPackageName");
+            if (static_cast<jobject>(pkgName) != nullptr) {
+                GLOBAL_PKG_NAME = pkgName.Pin().ToString();
+            }
 
-            // Получаем кэш директорию
-            jni::LocalObject<kFile> cacheFile = app("getCacheDir");
-            jni::LocalString pathString = cacheFile("getAbsolutePath");
-            GLOBAL_CACHE_DIR = pathString.Pin().ToString();
+            // Проверяем кэш-директорию
+            auto cacheFileObj = app("getCacheDir");
+            if (static_cast<jobject>(cacheFileObj) != nullptr) {
+                jni::LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
+                auto pathString = cacheFile("getAbsolutePath");
+                if (static_cast<jobject>(pathString) != nullptr) {
+                    GLOBAL_CACHE_DIR = pathString.Pin().ToString();
+                }
+            }
 
-            LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
-            LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
-
-            break;
+            // Если всё получили — выходим
+            if (!GLOBAL_PKG_NAME.empty() && !GLOBAL_CACHE_DIR.empty()) {
+                LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
+                LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
+                return; 
+            }
         }
 
-        usleep(200000);
+        // Если не получили — ждем дольше, возможно процесс еще не инициализирован
+        usleep(500000); 
         retry++;
     }
+    LOGE("[SoLoader] Failed to init virtual paths after many retries!");
 }
+
 
 
 
