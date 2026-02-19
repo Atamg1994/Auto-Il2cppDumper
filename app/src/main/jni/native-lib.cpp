@@ -103,7 +103,7 @@ void init_virtual_paths(JNIEnv* env) {
     while (retry < 100) { // Увеличим количество попыток
         // 1. Пытаемся получить доступ к статике
         auto activityThread = jni::StaticRef<kActivityThread>{};
-        
+
         // 2. Вызываем метод
         auto appJob = activityThread("currentApplication");
 
@@ -113,7 +113,7 @@ void init_virtual_paths(JNIEnv* env) {
 
             // Проверяем имя пакета
             auto pkgName = app("getPackageName");
-            if (static_cast<jobject>(pkgName) != nullptr) {
+            if (static_cast<jstring>(pkgName) != nullptr) {
                 GLOBAL_PKG_NAME = pkgName.Pin().ToString();
             }
 
@@ -122,21 +122,26 @@ void init_virtual_paths(JNIEnv* env) {
             if (static_cast<jobject>(cacheFileObj) != nullptr) {
                 jni::LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
                 auto pathString = cacheFile("getAbsolutePath");
-                if (static_cast<jobject>(pathString) != nullptr) {
+                if (static_cast<jstring>(pathString) != nullptr) {
                     GLOBAL_CACHE_DIR = pathString.Pin().ToString();
                 }
             }
-
+            if (!GLOBAL_PKG_NAME.empty() ) {
+                LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
+            }
+            if (!GLOBAL_CACHE_DIR.empty() ) {
+                LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
+            }
             // Если всё получили — выходим
             if (!GLOBAL_PKG_NAME.empty() && !GLOBAL_CACHE_DIR.empty()) {
-                LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
-                LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
-                return; 
+                LOGI("[SoLoader] ok Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
+                LOGI("[SoLoader] ok Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
+                return;
             }
         }
 
         // Если не получили — ждем дольше, возможно процесс еще не инициализирован
-        usleep(500000); 
+        usleep(500000);
         retry++;
     }
     LOGE("[SoLoader] Failed to init virtual paths after many retries!");
