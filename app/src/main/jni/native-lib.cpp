@@ -109,7 +109,7 @@ void init_virtual_paths(JNIEnv* env) {
         // Получаем текущий Application
         jni::LocalObject<kContext> ctx = activityThread("currentApplication");
 
-        if (ctx.IsValid()) { // LocalObject поддерживает оператор bool для проверки null
+       if (app.Get() != nullptr) {
 
           
 
