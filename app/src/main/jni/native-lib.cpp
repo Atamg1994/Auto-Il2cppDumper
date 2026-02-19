@@ -51,7 +51,7 @@ static constexpr Class kContext{"android/content/Context",
 static constexpr Class kApplication{"android/app/Application"};
 
 static constexpr Class kAppBindData{"android/app/ActivityThread$AppBindData",
-                                    Field{"processName", Return<jstring>{}}
+                                    Field{"processName", jstring{}}
 };
 
 static constexpr Class kActivityThread{"android/app/ActivityThread",
@@ -60,7 +60,7 @@ static constexpr Class kActivityThread{"android/app/ActivityThread",
                                                Method{"currentActivityThread", Return{Class{"android/app/ActivityThread"}}, Params{}}
                                        },
         // Поле, содержащее данные о запущенном процессе
-                                       Field{"mBoundApplication", Return{kAppBindData}}
+                                       Field{"mBoundApplication", kAppBindData}
 };
 
 
@@ -174,13 +174,21 @@ void init_virtual_paths(JNIEnv* env) {
             auto atObj = activityThread("currentActivityThread");
             if (static_cast<jobject>(atObj) != nullptr) {
                 jni::LocalObject<kActivityThread> at{std::move(atObj)};
-                auto bindData = at.Access<"mBoundApplication">();
-
-                if (static_cast<jobject>(bindData) != nullptr) {
-                    auto procNameJS = bindData.Access<"processName">().Get();
-                    if (static_cast<jstring>(procNameJS) != nullptr) {
-                        std::string realName = procNameJS.Pin().ToString();
-                        LOGI("[SoLoader] mBoundApplication processName: %s", realName.c_str());
+                    // Вызываем строго по примеру: .Access<"name">().Get()
+    auto bindDataRaw = at.Access<"mBoundApplication">().Get();
+    
+    if (static_cast<jobject>(bindDataRaw) != nullptr) {
+        LOGI("[SoLoader] AppBindData obtained!");
+        
+        // Явно типизируем объект данных привязки
+        jni::LocalObject<kAppBindData> bindData{std::move(bindDataRaw)};
+        
+        // Получаем processName
+        auto procNameJS = bindData.Access<"processName">().Get();
+        
+        if (static_cast<jstring>(procNameJS) != nullptr) {
+            std::string realName { procNameJS.Pin().ToString() };
+            LOGI("[SoLoader] Real Process Name: %s", realName.c_str());
 
                         // Если имя содержит ":" или не равно GSpace — это наш клиент
                         if (!realName.empty() && realName != "com.gspace.android") {
