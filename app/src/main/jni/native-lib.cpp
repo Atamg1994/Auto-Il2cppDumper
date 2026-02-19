@@ -27,6 +27,7 @@ const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
 	  
 		 
 // --- Описание Java классов ---
+// --- Описание Java классов ---
 static constexpr Class kFile{"java/io/File", 
     Method{"getAbsolutePath", Return<jstring>{}}
 };
@@ -38,7 +39,8 @@ static constexpr Class kContext{"android/content/Context",
 
 static constexpr Class kActivityThread{"android/app/ActivityThread", 
     Static {
-        Method{"currentApplication", Return<kContext>{}} // Application наследуется от Context
+        // Убрали угловые скобки у kContext
+        Method{"currentApplication", Return{kContext}} 
     }
 };
 
@@ -95,22 +97,20 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
 
 // Получение путей через JNI-Bind
 void init_virtual_paths(JNIEnv* env) {
-																	   
- 
     int retry = 0;
     while (retry < 50) {
-        // 1. Вызов статического метода через объект класса
-        auto app = kActivityThread.Call<"currentApplication">();
+        // Добавили .template перед Call
+        auto app = kActivityThread.template Call<"currentApplication">();
         
         if (app) {
-            // 2. Оборачиваем результат в LocalObject
             LocalObject<kContext> ctx{std::move(app)};
             
-            // 3. Используем Call<"method">() и конвертируем результат через UtfChars()
-            GLOBAL_PKG_NAME = ctx.Call<"getPackageName">().UtfChars();
+            // Используем c_str() или явное приведение к std::string 
+            // В JniBind 1.5.0 обычно работает прямое приведение или .ToString()
+            GLOBAL_PKG_NAME = std::string(ctx.template Call<"getPackageName">());
             
-            auto cacheFile = ctx.Call<"getCacheDir">();
-            GLOBAL_CACHE_DIR = cacheFile.Call<"getAbsolutePath">().UtfChars();
+            auto cacheFile = ctx.template Call<"getCacheDir">();
+            GLOBAL_CACHE_DIR = std::string(cacheFile.template Call<"getAbsolutePath">());
             
             LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
             LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
@@ -120,6 +120,7 @@ void init_virtual_paths(JNIEnv* env) {
         retry++;
     }
 }
+
 
 			 
 void processAndLoad(std::string fullPath, std::string fileName, bool isExternal) {
