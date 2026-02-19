@@ -344,6 +344,8 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 
     g_vm_global = vm;
     g_jvm = std::make_unique<jni::JvmRef<jni::kDefaultJvm>>(vm);
+    // Инициализируем через reset, как в примере Google
+    //g_jvm.reset(new jni::JvmRef<jni::kDefaultJvm>{vm});
     static jni::JvmRef<jni::kDefaultJvm> jvm{vm};
 
     LOGI("[SoLoader] JNI System Initialized (Release 1.5.0)");
