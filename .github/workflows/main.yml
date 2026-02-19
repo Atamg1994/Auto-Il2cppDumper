@@ -31,7 +31,7 @@ jobs:
     - name: Setup NDK
       uses: nttld/setup-ndk@v1
       with:
-        ndk-version: r23b
+        ndk-version: r27
         link-to-sdk: true # Важно для связи NDK с Gradle
 
     - name: Make gradlew executable
