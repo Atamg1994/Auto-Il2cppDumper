@@ -17,26 +17,28 @@
 using namespace jni;
 
 // --- Глобальные данные ---
-			   
+
 JavaVM* g_vm_global = nullptr;
-static std::unique_ptr<JvmRef<kDefaultJvm>> g_jvm_ref; // Глобальный реф для JNI Bind
+																									 
 std::string GLOBAL_CACHE_DIR = "";
 std::string GLOBAL_PKG_NAME = "";
 const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
 
-				  
-						   
+	  
+		 
 // --- Описание Java классов ---
 static constexpr Class kFile{"java/io/File", 
     Method{"getAbsolutePath", Return<jstring>{}}
 };
+
 static constexpr Class kContext{"android/content/Context", 
     Method{"getCacheDir", Return{kFile}}, 
     Method{"getPackageName", Return<jstring>{}}
 };
+
 static constexpr Class kActivityThread{"android/app/ActivityThread", 
     Static {
-        Method{"currentApplication", Return{"android/app/Application"}}
+        Method{"currentApplication", Return<kContext>{}} // Application наследуется от Context
     }
 };
 
@@ -79,7 +81,7 @@ bool copyFile(const std::string& src, const std::string& dst) {
     return true;
 }
 
-																						 
+					   
 void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string fileName) {
     LOGI("[SoLoader] Thread started: waiting for %s to load %s", targetLib.c_str(), fileName.c_str());
     while (!isLibraryLoaded(targetLib.c_str())) {
@@ -91,22 +93,24 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
     else LOGE("[SoLoader] Failed to load %s: %s", fileName.c_str(), dlerror());
 }
 
-// Получение путей через JNI-Bind (универсальный синтаксис)
+// Получение путей через JNI-Bind
 void init_virtual_paths(JNIEnv* env) {
-    // В 1.5.0 JvmRef инициализирован глобально, здесь просто используем возможности
-	
+																	   
+ 
     int retry = 0;
     while (retry < 50) {
-        // Используем Call("name") без < > для стабильности компиляции на Clang
-        auto app = Class<kActivityThread>::Call("currentApplication");
+        // 1. Вызов статического метода через объект класса
+        auto app = kActivityThread.Call<"currentApplication">();
+        
         if (app) {
+            // 2. Оборачиваем результат в LocalObject
             LocalObject<kContext> ctx{std::move(app)};
             
-            // Явное приведение типов (std::string) убирает ошибку "no viable overloaded ="
-            GLOBAL_PKG_NAME = (std::string)ctx.Call("getPackageName");
+            // 3. Используем Call<"method">() и конвертируем результат через UtfChars()
+            GLOBAL_PKG_NAME = ctx.Call<"getPackageName">().UtfChars();
             
-            auto cacheFile = ctx.Call("getCacheDir");
-            GLOBAL_CACHE_DIR = (std::string)cacheFile.Call("getAbsolutePath");
+            auto cacheFile = ctx.Call<"getCacheDir">();
+            GLOBAL_CACHE_DIR = cacheFile.Call<"getAbsolutePath">().UtfChars();
             
             LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
             LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
@@ -117,7 +121,7 @@ void init_virtual_paths(JNIEnv* env) {
     }
 }
 
-											  
+			 
 void processAndLoad(std::string fullPath, std::string fileName, bool isExternal) {
     std::string finalPath = fullPath;
  
@@ -144,7 +148,7 @@ void processAndLoad(std::string fullPath, std::string fileName, bool isExternal)
 }
 
 void loadExtraLibraries() {
-													   
+				
     char line[512]; std::string libDir = "";
     FILE *fp = fopen("/proc/self/maps", "rt");
     if (fp) {
@@ -170,7 +174,7 @@ void loadExtraLibraries() {
         }
     }
 
-												 
+			 
     if (GLOBAL_PKG_NAME.empty()) return;
 #if defined(__aarch64__)
     std::string arch = "arm64-v8a";
@@ -192,14 +196,14 @@ void loadExtraLibraries() {
     }
 }
 
-								
+		
 #define libTarget "libil2cpp.so"
 
 void dump_thread() {
     JNIEnv* env;
-    LOGI("[SoLoader] AttachCurrentThread.");
+											
     if (g_vm_global->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
-			
+   
     
     init_virtual_paths(env);
     loadExtraLibraries();
@@ -209,7 +213,7 @@ void dump_thread() {
     int elapsed = 0;
     while (!isLibraryLoaded(libTarget)) {
         if (elapsed >= timeout) {
-            LOGI("[SoLoader] Timeout reached: %s not found. Killing thread.", libTarget);
+            LOGI("[SoLoader] Timeout reached: %s not found.", libTarget);
             dump = false;
             break;
         }
@@ -217,31 +221,31 @@ void dump_thread() {
         elapsed++;
     }
 	
-	 
+  
     if (dump) {
         LOGI("[SoLoader] %s detected. Sleeping before dump...", libTarget);
         sleep(Sleep);
         void* il2cpp_handle = dlopen(libTarget, RTLD_NOW);
         if (il2cpp_handle) {
             std::string androidDataPath = "/storage/emulated/0/Documents/" + GLOBAL_PKG_NAME + "-dump.cs";
-            LOGI("[SoLoader] Start dumping: %s -> %s", GLOBAL_PKG_NAME.c_str(), androidDataPath.c_str());
+																										 
             if(il2cpp_api_init(il2cpp_handle)){
                 il2cpp_dump(androidDataPath.c_str());
             }
         }
     }
 
-		
-    LOGI("[SoLoader] DetachCurrentThread.");
+  
+											
     g_vm_global->DetachCurrentThread();
 }
 
-// --- JNI Вход ---
+					   
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     g_vm_global = vm;
     
-    // Инициализация JNI Bind (согласно разделу LifeCycle документации)
-    static auto jvm{std::make_unique<jni::JvmRef<jni::kDefaultJvm>>(vm)};
+    // Инициализация JNI Bind жизненного цикла
+    static jni::JvmRef<jni::kDefaultJvm> jvm{vm};
     
     LOGI("[SoLoader] JNI System Initialized (Release 1.5.0)");
     std::thread(dump_thread).detach();
