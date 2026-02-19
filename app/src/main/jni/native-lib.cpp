@@ -104,7 +104,7 @@ void init_virtual_paths(JNIEnv* env) {
     while (retry < 50) {
 
         // ✅ ВАЖНО: без Access()
-        auto app = kActivityThread("currentApplication");
+       auto app = jni::LocalObject<kActivityThread>{}("currentApplication");
 
         if (app) {
             LocalObject<kContext> ctx{std::move(app)};
