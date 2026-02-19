@@ -277,49 +277,53 @@ void init_virtual_paths(JNIEnv* env) {
 
 void processAndLoad(std::string fullPath, std::string fileName, bool isExternal) {
     std::string finalPath = fullPath;
-    std::string uniqueName = fileName; // Копия оригинального имени
+    std::string uniqueName = fileName;
 
     if (isExternal) {
-        if (GLOBAL_CACHE_DIR.empty()) {
-            LOG_E("Cannot copy: GLOBAL_CACHE_DIR is empty");
-            return;
-        }
+        if (GLOBAL_CACHE_DIR.empty()) return;
 
         pid_t pid = getpid();
         long tid = syscall(SYS_gettid);
 
-        // Создаем суффикс, который принудительно включает режим "Load"
-        std::string suffix = "_" + std::to_string(pid) + "_" + std::to_string(tid) + "_Load_";
+        // Весь "фарш" (PID, TID, Маркер загрузки) — в один тег
+        // Формат тега: _PID_TID_Load_
+        std::string tag = "_" + std::to_string(pid) + "_" + std::to_string(tid) + "_Load_";
 
-        size_t dotPos = uniqueName.find_last_of('.');
-        if (dotPos != std::string::npos) {
-            uniqueName.insert(dotPos, suffix);
+        // Вставляем тег СРАЗУ после "lib" (3-я позиция), чтобы не ломать префиксы и суффиксы
+        if (uniqueName.find("lib") == 0) {
+            uniqueName.insert(3, tag);
         } else {
-            uniqueName += suffix;
+            uniqueName.insert(0, tag);
         }
 
         finalPath = GLOBAL_CACHE_DIR + "/" + uniqueName;
 
-        if (!copyFile(fullPath, finalPath)) {
-            LOG_E("Copy failed: %s -> %s", fileName.c_str(), uniqueName.c_str());
-            return;
-        }
-        LOG_D("Created unique instance in cache: %s", uniqueName.c_str());
+        if (!copyFile(fullPath, finalPath)) return;
+        LOG_D("Unique instance created: %s", uniqueName.c_str());
     }
 
-    // Теперь работаем с uniqueName (в ней либо оригинал, либо наше имя с _Load_)
-    if (uniqueName.find("libWL_") == 0) {
-        size_t first = uniqueName.find("_");
-        size_t second = uniqueName.find("_", first + 1);
+    // 1. Конфиги (frida.config.so, unityconfig.so) — копируем, но не грузим через dlopen
+    if (uniqueName.find("config") != std::string::npos || uniqueName.find(".json") != std::string::npos) {
+        LOG_D("Config detected, skipping dlopen: %s", uniqueName.c_str());
+        return;
+    }
 
-        if (first != std::string::npos && second != std::string::npos) {
-            std::string target = uniqueName.substr(first + 1, second - first - 1);
-            LOG_D("Mode: WaitAndLoad for %s (Target: %s)", uniqueName.c_str(), target.c_str());
-            std::thread(waitAndLoadWorker, finalPath, target, uniqueName).detach();
+    // 2. Режим ожидания (lib_PID_TID_Load_WL_target.so)
+    size_t wlPos = uniqueName.find("WL_");
+    if (wlPos != std::string::npos) {
+        // Парсим строго то, что после "WL_" и до ".so"
+        std::string targetPart = uniqueName.substr(wlPos + 3);
+        size_t soPos = targetPart.find(".so");
+
+        if (soPos != std::string::npos) {
+            std::string targetLib = targetPart.substr(0, soPos + 3); // Получаем "libil2cpp.so"
+            LOG_D("Mode: WaitAndLoad -> %s (Wait for: %s)", uniqueName.c_str(), targetLib.c_str());
+            std::thread(waitAndLoadWorker, finalPath, targetLib, uniqueName).detach();
         }
     }
-    else if (uniqueName.find("Load") != std::string::npos) {
-        LOG_D("Mode: Immediate Load for %s", uniqueName.c_str());
+        // 3. Режим немедленной загрузки (ищем наш маркер _Load_)
+    else if (uniqueName.find("_Load_") != std::string::npos) {
+        LOG_D("Mode: Immediate Load -> %s", uniqueName.c_str());
         void* h = dlopen(finalPath.c_str(), RTLD_NOW);
         if (h) {
             LOG_D("Successfully Loaded: %s", uniqueName.c_str());
@@ -328,6 +332,7 @@ void processAndLoad(std::string fullPath, std::string fileName, bool isExternal)
         }
     }
 }
+
 void loadExtraLibraries() {
     char line[512];
     std::string libDir = "";
