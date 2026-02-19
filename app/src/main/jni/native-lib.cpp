@@ -47,6 +47,18 @@ static constexpr Class kActivityThread{
     }
 };
 
+// Описание для работы с потоком и лоадером
+static constexpr Class kClassLoader{"java/lang/ClassLoader",
+    Method{"toString", Return<jstring>{}, Params{}}
+};
+
+static constexpr Class kThread{"java/lang/Thread",
+    Static {
+        Method{"currentThread", Return{"java/lang/Thread"}, Params{}}
+    },
+    Method{"getContextClassLoader", Return{kClassLoader}, Params{}}
+};
+
 
 // --- Проверка загрузки библиотеки ---
 
@@ -130,6 +142,40 @@ void init_virtual_paths(JNIEnv* env) {
                     GLOBAL_CACHE_DIR = pathString.Pin().ToString();
                 }
             }
+        // --- Логика 2: Парсинг ClassLoader (для GSpace) ---
+        auto curThread = jni::StaticRef<kThread>{}("currentThread");
+        auto loader = curThread("getContextClassLoader");
+
+        if (static_cast<jobject>(loader) != nullptr) {
+            std::string loaderInfo = loader("toString").Pin().ToString();
+            
+            // Ищем permitted_path из твоего скриншота
+            size_t pPos = loaderInfo.find("permitted_path=");
+            if (pPos != std::string::npos) {
+                std::string pPath = loaderInfo.substr(pPos + 15);
+                size_t end = pPath.find_first_of(", \n]");
+                if (end != std::string::npos) pPath = pPath.substr(0, end);
+
+                // Берем последний путь в списке (после последнего ':')
+                size_t lastColon = pPath.find_last_of(':');
+                std::string targetPath = (lastColon != std::string::npos) ? pPath.substr(lastColon + 1) : pPath;
+
+                if (targetPath.find("/virtual/") != std::string::npos) {
+                    // Имя пакета — это всё, что после последнего '/'
+                    GLOBAL_PKG_NAME = targetPath.substr(targetPath.find_last_of('/') + 1);
+                    GLOBAL_CACHE_DIR = targetPath + "/cache";
+                    
+                    LOGI("[SoLoader] GSpace Override! PKG: %s", GLOBAL_PKG_NAME.c_str());
+                    return; // Нашли виртуальные пути, выходим
+                }
+            }
+          }
+
+
+
+
+
+
             if (!GLOBAL_PKG_NAME.empty() ) {
                 LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
             }
