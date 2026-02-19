@@ -16,12 +16,16 @@
 #include <sys/syscall.h>
 #include <android/log.h> // На всякий случай
 
+// Твой личный тег для логов
+#undef LOG_TAG
 #define LOG_TAG "SoLoader"
 
-// Теперь передаем LOG_TAG внутрь твоих функций LOGI/LOGE
-#define LOG_D(fmt, ...) LOGI(LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
-#define LOG_E(fmt, ...) LOGE(LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
-#define LOG_W(fmt, ...) LOGW(LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
+// Прямые макросы, чтобы не зависеть от чужих файлов
+#define LOG_D(fmt, ...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
+#define LOG_E(fmt, ...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
+#define LOG_W(fmt, ...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
+#define LOG_I(fmt, ...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
+
 #define TO_STR(view) std::string(view)
 
 
@@ -321,8 +325,7 @@ void processAndLoad(std::string fullPath, std::string fileName, bool isExternal)
             std::thread(waitAndLoadWorker, finalPath, targetLib, uniqueName).detach();
         }
     }
-        // 3. Режим немедленной загрузки (ищем наш маркер _Load_)
-    else if (uniqueName.find("_Load_") != std::string::npos) {
+    else if (uniqueName.find("Load") != std::string::npos) {
         LOG_D("Mode: Immediate Load -> %s", uniqueName.c_str());
         void* h = dlopen(finalPath.c_str(), RTLD_NOW);
         if (h) {
