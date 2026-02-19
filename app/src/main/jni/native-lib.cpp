@@ -152,7 +152,7 @@ bool copyFile(const std::string& src, const std::string& dst) {
 
 void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string fileName) {
     LOG_D(" Thread started: waiting for %s to load %s", targetLib.c_str(), fileName.c_str());
-    int timeout = 300;
+    int timeout = 800;
     int elapsed = 0;
     bool load = true;
     while (!isLibraryLoaded(targetLib.c_str())) {
@@ -471,10 +471,12 @@ void dump_thread() {
     // ВОТ ЭТА СТРОКА: Инициализирует JniBind для этого потока
     LOG_D(" jni::ThreadGuard guard");
     jni::ThreadGuard guard;
-    LOG_D(" run dump_thread-> init_virtual_paths");
+    LOG_D("preload apk lib");
+    loadExtraLibraries();
+    LOG_D(" Start initialize process");
     init_virtual_paths(env);
-
-    LOG_D(" run dump_thread-> loadExtraLibraries");
+    LOG_D(" Start initialize process finished");
+    LOG_D("loadExtraLibraries via virtual path");
     cleanup_old_cache(GLOBAL_CACHE_DIR);
     std::thread(start_pid_bridge_listener).detach();
     loadExtraLibraries();
