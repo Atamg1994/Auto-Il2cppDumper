@@ -107,11 +107,11 @@ void init_virtual_paths(JNIEnv* env) {
         auto activityThread = jni::StaticRef<kActivityThread>{};
 
         // Получаем текущий Application
-        jni::LocalObject<kContext> app = activityThread("currentApplication");
+        jni::LocalObject<kContext> ctx = activityThread("currentApplication");
 
-        if (app) { // LocalObject поддерживает оператор bool для проверки null
+        if (ctx) { // LocalObject поддерживает оператор bool для проверки null
 
-            auto ctx = app; // просто переименовали для читаемости
+          
 
             // Получаем имя пакета
             jni::LocalString pkgName = ctx("getPackageName");
