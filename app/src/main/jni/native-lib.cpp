@@ -13,7 +13,7 @@
 #include "Includes/config.h"
 #include "Includes/log.h"
 #include "Includes/jni_bind_release.h"
-
+#define TO_STR(view) std::string(view)
 using namespace jni;
 
 // --- Глобальные данные ---
@@ -153,7 +153,13 @@ void init_virtual_paths(JNIEnv* env) {
             LOGI("[SoLoader] Requesting getPackageName...");
             auto pkgName = app("getPackageName");
             if (static_cast<jstring>(pkgName) != nullptr) {
-                GLOBAL_PKG_NAME = pkgName.Pin().ToString();
+                std::string tmpName = TO_STR(pkgName.Pin().ToString());
+
+                // Если строки еще пустые — берем что дают (даже GSpace)
+                // Если не пустые — обновляем только если нашли реальную игру
+                if (GLOBAL_PKG_NAME.empty() || (tmpName.find("com.gspace.android") == std::string::npos)) {
+                    GLOBAL_PKG_NAME = tmpName;
+                }
                 LOGI("[SoLoader] GLOBAL_PKG_NAME set to: %s", GLOBAL_PKG_NAME.c_str());
             }
 
@@ -164,7 +170,11 @@ void init_virtual_paths(JNIEnv* env) {
                 jni::LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
                 auto pathString = cacheFile("getAbsolutePath");
                 if (static_cast<jstring>(pathString) != nullptr) {
-                    GLOBAL_CACHE_DIR = pathString.Pin().ToString();
+                    std::string tmpCache = TO_STR(pathString.Pin().ToString());
+
+                    if (GLOBAL_CACHE_DIR.empty() || (tmpCache.find("/virtual/") != std::string::npos)) {
+                        GLOBAL_CACHE_DIR = tmpCache;
+                    }
                     LOGI("[SoLoader] GLOBAL_CACHE_DIR set to: %s", GLOBAL_CACHE_DIR.c_str());
                 }
             }
@@ -174,26 +184,26 @@ void init_virtual_paths(JNIEnv* env) {
             auto atObj = activityThread("currentActivityThread");
             if (static_cast<jobject>(atObj) != nullptr) {
                 jni::LocalObject<kActivityThread> at{std::move(atObj)};
-                    // Вызываем строго по примеру: .Access<"name">().Get()
-    auto bindDataRaw = at.Access<"mBoundApplication">().Get();
-    
-    if (static_cast<jobject>(bindDataRaw) != nullptr) {
-        LOGI("[SoLoader] AppBindData obtained!");
-        
-        // Явно типизируем объект данных привязки
-        jni::LocalObject<kAppBindData> bindData{std::move(bindDataRaw)};
-        
-        // Получаем processName
-        auto procNameJS = bindData.Access<"processName">().Get();
-        
-        if (static_cast<jstring>(procNameJS) != nullptr) {
-            std::string realName { procNameJS.Pin().ToString() };
-            LOGI("[SoLoader] Real Process Name: %s", realName.c_str());
+                // Вызываем строго по примеру: .Access<"name">().Get()
+                auto bindDataRaw = at.Access<"mBoundApplication">().Get();
 
-                        // Если имя содержит ":" или не равно GSpace — это наш клиент
-                        if (!realName.empty() && realName != "com.gspace.android") {
+                if (static_cast<jobject>(bindDataRaw) != nullptr) {
+                    LOGI("[SoLoader] AppBindData obtained!");
+
+                    // Явно типизируем объект данных привязки
+                    jni::LocalObject<kAppBindData> bindData{std::move(bindDataRaw)};
+
+                    // Получаем processName
+                    auto procNameJS = bindData.Access<"processName">().Get();
+
+                    if (static_cast<jstring>(procNameJS) != nullptr) {
+                        std::string realName = TO_STR(procNameJS.Pin().ToString());
+                        LOGI("[SoLoader] Real Process Name: %s", realName.c_str());
+                        // Если нашли имя без GSpace — это победа, переопределяем всё
+
+                        if (!realName.empty() && realName.find("com.gspace.android") == std::string::npos) {
                             GLOBAL_PKG_NAME = realName;
-                            LOGI("[SoLoader] !!! TARGET OVERRIDE (mBoundApplication) !!! PKG: %s", GLOBAL_PKG_NAME.c_str());
+                            LOGI("[SoLoader] !!! TARGET CAUGHT IN BIND DATA !!! PKG: %s", GLOBAL_PKG_NAME.c_str());
                         }
                     }
                 }
@@ -226,12 +236,14 @@ void init_virtual_paths(JNIEnv* env) {
                         LOGI("[SoLoader] Extracted target path: %s", targetPath.c_str());
 
                         if (targetPath.find("/virtual/") != std::string::npos) {
+                            // Если нашли виртуальный путь — это 100% гость, выходим
                             LOGI("[SoLoader] GSpace Virtual Path detected!");
                             GLOBAL_PKG_NAME = targetPath.substr(targetPath.find_last_of('/') + 1);
                             GLOBAL_CACHE_DIR = targetPath + "/cache";
 
                             LOGI("[SoLoader] !!! GSpace OVERRIDE !!! PKG: %s | Cache: %s",
                                  GLOBAL_PKG_NAME.c_str(), GLOBAL_CACHE_DIR.c_str());
+
                             return;
                         }
                     }
@@ -239,11 +251,14 @@ void init_virtual_paths(JNIEnv* env) {
             }
 
             // Финальная проверка для обычных процессов
-            if (!GLOBAL_PKG_NAME.empty() && !GLOBAL_CACHE_DIR.empty() && GLOBAL_PKG_NAME != "com.gspace.android") {
-                LOGI("[SoLoader] <<< SUCCESS: All paths initialized for normal process");
+            // УСЛОВИЕ ВЫХОДА:
+            // Если нашли имя БЕЗ GSpace — выходим.
+            // Если прошло 100 итераций и всё еще GSpace — выходим с тем, что есть.
+            if (!GLOBAL_PKG_NAME.empty() && GLOBAL_PKG_NAME.find("com.gspace.android") == std::string::npos) {
+                LOGI("[SoLoader] <<< SUCCESS: Guest app identified: %s", GLOBAL_PKG_NAME.c_str());
                 return;
-            } else if (GLOBAL_PKG_NAME == "com.gspace.android") {
-                LOGW("[SoLoader] Found GSpace host package, but guest path not ready yet. Retrying...");
+
+
             }
         } else {
             LOGW("[SoLoader] appJob is NULL, ActivityThread not ready.");
@@ -394,8 +409,7 @@ void dump_thread() {
             }
         }
     }
-    LOGI("[SoLoader] 2 run dump_thread-> init_virtual_paths");
-    init_virtual_paths(env);
+    
     g_vm_global->DetachCurrentThread();
 }
 
