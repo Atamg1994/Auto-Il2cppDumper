@@ -106,20 +106,21 @@ void init_virtual_paths(JNIEnv* env) {
 
         auto activityThread = jni::StaticRef<kActivityThread>{};
 
-        auto app = activityThread("currentApplication");
+        // Получаем текущий Application
+        jni::LocalObject<kContext> app = activityThread("currentApplication");
 
-        if (!app.IsNull()) {
+        if (app) { // LocalObject поддерживает оператор bool для проверки null
 
-            jni::LocalObject<kContext> ctx{std::move(app)};
+            auto ctx = app; // просто переименовали для читаемости
 
-            auto pkgName = ctx("getPackageName");
-            GLOBAL_PKG_NAME = pkgName.ToString();
+            // Получаем имя пакета
+            jni::LocalString pkgName = ctx("getPackageName");
+            GLOBAL_PKG_NAME = pkgName.Pin().ToString(); // через Pin() безопасно читаем строку
 
-            auto cacheFileObj = ctx("getCacheDir");
-            jni::LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
-
-            auto pathString = cacheFile("getAbsolutePath");
-            GLOBAL_CACHE_DIR = pathString.ToString();
+            // Получаем кэш директорию
+            jni::LocalObject<kFile> cacheFile = ctx("getCacheDir");
+            jni::LocalString pathString = cacheFile("getAbsolutePath");
+            GLOBAL_CACHE_DIR = pathString.Pin().ToString();
 
             LOGI("[SoLoader] Virtual Package: %s",
                  GLOBAL_PKG_NAME.c_str());
