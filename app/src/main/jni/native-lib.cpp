@@ -50,10 +50,17 @@ static constexpr Class kContext{"android/content/Context",
 
 static constexpr Class kApplication{"android/app/Application"};
 
+static constexpr Class kAppBindData{"android/app/ActivityThread$AppBindData",
+                                    Field{"processName", Return<jstring>{}}
+};
+
 static constexpr Class kActivityThread{"android/app/ActivityThread",
                                        Static {
-                                               Method{"currentApplication", Return{kApplication}, Params{}}
-                                       }
+                                               Method{"currentApplication", Return{kApplication}, Params{}},
+                                               Method{"currentActivityThread", Return{Class{"android/app/ActivityThread"}}, Params{}}
+                                       },
+        // Поле, содержащее данные о запущенном процессе
+                                       Field{"mBoundApplication", Return{kAppBindData}}
 };
 
 
@@ -121,7 +128,7 @@ void init_virtual_paths(JNIEnv* env) {
 
     while (retry < 100) {
         LOGI("[SoLoader] [Attempt %d] Searching for ActivityThread...", retry);
-        
+
         // 1. Пытаемся получить доступ к ActivityThread
         auto activityThread = jni::StaticRef<kActivityThread>{};
         auto appJob = activityThread("currentApplication");
@@ -162,7 +169,29 @@ void init_virtual_paths(JNIEnv* env) {
                 }
             }
 
-            // --- Логика 2: ClassLoader (Парсинг для GSpace) ---
+            // --- Логика 2: Глубокий разбор ActivityThread (mBoundApplication) ---
+            LOGI("[SoLoader] Checking mBoundApplication for real process name...");
+            auto atObj = activityThread("currentActivityThread");
+            if (static_cast<jobject>(atObj) != nullptr) {
+                jni::LocalObject<kActivityThread> at{std::move(atObj)};
+                auto bindData = at.Access<"mBoundApplication">();
+
+                if (static_cast<jobject>(bindData) != nullptr) {
+                    auto procNameJS = bindData.Access<"processName">().Get();
+                    if (static_cast<jstring>(procNameJS) != nullptr) {
+                        std::string realName = procNameJS.Pin().ToString();
+                        LOGI("[SoLoader] mBoundApplication processName: %s", realName.c_str());
+
+                        // Если имя содержит ":" или не равно GSpace — это наш клиент
+                        if (!realName.empty() && realName != "com.gspace.android") {
+                            GLOBAL_PKG_NAME = realName;
+                            LOGI("[SoLoader] !!! TARGET OVERRIDE (mBoundApplication) !!! PKG: %s", GLOBAL_PKG_NAME.c_str());
+                        }
+                    }
+                }
+            }
+
+            // --- Логика 3: ClassLoader (permitted_path) ---
             LOGI("[SoLoader] Checking ClassLoader for virtual environment...");
             auto curThreadJob = jni::StaticRef<kThread>{}("currentThread");
             if (static_cast<jobject>(curThreadJob) != nullptr) {
@@ -193,9 +222,9 @@ void init_virtual_paths(JNIEnv* env) {
                             GLOBAL_PKG_NAME = targetPath.substr(targetPath.find_last_of('/') + 1);
                             GLOBAL_CACHE_DIR = targetPath + "/cache";
 
-                            LOGI("[SoLoader] !!! GSpace OVERRIDE !!! PKG: %s | Cache: %s", 
+                            LOGI("[SoLoader] !!! GSpace OVERRIDE !!! PKG: %s | Cache: %s",
                                  GLOBAL_PKG_NAME.c_str(), GLOBAL_CACHE_DIR.c_str());
-                            return; 
+                            return;
                         }
                     }
                 }
