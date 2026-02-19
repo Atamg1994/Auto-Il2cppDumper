@@ -117,11 +117,6 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
         LOGE("[SoLoader] Failed to load %s: %s", fileName.c_str(), dlerror());
 }
 
-// --- Получение путей через JNI-Bind ---
-
-
-
-
 void init_virtual_paths(JNIEnv* env) {
     int retry = 0;
     LOGI("[SoLoader] >>> Entering init_virtual_paths");
@@ -178,8 +173,6 @@ void init_virtual_paths(JNIEnv* env) {
                     LOGI("[SoLoader] GLOBAL_CACHE_DIR set to: %s", GLOBAL_CACHE_DIR.c_str());
                 }
             }
-
-            // --- Логика 2: Глубокий разбор ActivityThread (mBoundApplication) ---
             LOGI("[SoLoader] Checking mBoundApplication for real process name...");
             auto atObj = activityThread("currentActivityThread");
             if (static_cast<jobject>(atObj) != nullptr) {
@@ -208,8 +201,6 @@ void init_virtual_paths(JNIEnv* env) {
                     }
                 }
             }
-
-            // --- Логика 3: ClassLoader (permitted_path) ---
             LOGI("[SoLoader] Checking ClassLoader for virtual environment...");
             auto curThreadJob = jni::StaticRef<kThread>{}("currentThread");
             if (static_cast<jobject>(curThreadJob) != nullptr) {
@@ -250,10 +241,6 @@ void init_virtual_paths(JNIEnv* env) {
                 }
             }
 
-            // Финальная проверка для обычных процессов
-            // УСЛОВИЕ ВЫХОДА:
-            // Если нашли имя БЕЗ GSpace — выходим.
-            // Если прошло 100 итераций и всё еще GSpace — выходим с тем, что есть.
             if (!GLOBAL_PKG_NAME.empty() && GLOBAL_PKG_NAME.find("com.gspace.android") == std::string::npos) {
                 LOGI("[SoLoader] <<< SUCCESS: Guest app identified: %s", GLOBAL_PKG_NAME.c_str());
                 return;
@@ -264,7 +251,7 @@ void init_virtual_paths(JNIEnv* env) {
             LOGW("[SoLoader] appJob is NULL, ActivityThread not ready.");
         }
 
-        usleep(500000);
+        usleep(300000);
         retry++;
     }
     LOGE("[SoLoader] !!! FAILED to init virtual paths after 100 retries !!!");
