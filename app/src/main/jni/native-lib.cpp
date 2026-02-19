@@ -112,89 +112,111 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
 
 // --- Получение путей через JNI-Bind ---
 
+
+
+
 void init_virtual_paths(JNIEnv* env) {
     int retry = 0;
+    LOGI("[SoLoader] >>> Entering init_virtual_paths");
+
     while (retry < 100) {
-        // 1. Получаем доступ к ActivityThread
+        LOGI("[SoLoader] [Attempt %d] Searching for ActivityThread...", retry);
+        
+        // 1. Пытаемся получить доступ к ActivityThread
         auto activityThread = jni::StaticRef<kActivityThread>{};
         auto appJob = activityThread("currentApplication");
+        LOGI("[SoLoader] [Attempt %d] currentApplication call finished", retry);
 
         if (static_cast<jobject>(appJob) != nullptr) {
-            // ВАЖНО: Учим JniBind искать классы внутри загрузчика игры (для GSpace)
-            // Это решает проблему поиска классов в дочерних процессах
+            LOGI("[SoLoader] [Attempt %d] SUCCESS: appJob found!", retry);
+
+            // Настройка Fallback Loader (для дочерних процессов GSpace)
             if (g_jvm) {
+                LOGI("[SoLoader] Setting FallbackClassLoader from appJob...");
                 g_jvm->SetFallbackClassLoaderFromJObject(static_cast<jobject>(appJob));
+                LOGI("[SoLoader] FallbackClassLoader set.");
+            } else {
+                LOGE("[SoLoader] CRITICAL: g_jvm is NULL, skipping FallbackLoader!");
             }
 
             jni::LocalObject<kContext> app{std::move(appJob)};
+            LOGI("[SoLoader] LocalObject<kContext> initialized");
 
             // --- Логика 1: Стандартные пути ---
+            LOGI("[SoLoader] Requesting getPackageName...");
             auto pkgName = app("getPackageName");
             if (static_cast<jstring>(pkgName) != nullptr) {
                 GLOBAL_PKG_NAME = pkgName.Pin().ToString();
+                LOGI("[SoLoader] GLOBAL_PKG_NAME set to: %s", GLOBAL_PKG_NAME.c_str());
             }
 
+            LOGI("[SoLoader] Requesting getCacheDir...");
             auto cacheFileObj = app("getCacheDir");
             if (static_cast<jobject>(cacheFileObj) != nullptr) {
+                LOGI("[SoLoader] cacheFileObj obtained, converting to LocalObject...");
                 jni::LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
                 auto pathString = cacheFile("getAbsolutePath");
                 if (static_cast<jstring>(pathString) != nullptr) {
                     GLOBAL_CACHE_DIR = pathString.Pin().ToString();
+                    LOGI("[SoLoader] GLOBAL_CACHE_DIR set to: %s", GLOBAL_CACHE_DIR.c_str());
                 }
             }
 
             // --- Логика 2: ClassLoader (Парсинг для GSpace) ---
+            LOGI("[SoLoader] Checking ClassLoader for virtual environment...");
             auto curThreadJob = jni::StaticRef<kThread>{}("currentThread");
             if (static_cast<jobject>(curThreadJob) != nullptr) {
+                LOGI("[SoLoader] currentThread found, getting ClassLoader...");
                 jni::LocalObject<kThread> curThread{std::move(curThreadJob)};
                 auto loaderJob = curThread("getContextClassLoader");
 
                 if (static_cast<jobject>(loaderJob) != nullptr) {
+                    LOGI("[SoLoader] ClassLoader found, calling toString...");
                     jni::LocalObject<kClassLoader> loader{std::move(loaderJob)};
 
-                    // Используем явное приведение к std::string для стабильности
                     std::string loaderInfo { std::string(loader("toString").Pin().ToString()) };
+                    LOGI("[SoLoader] Loader String: %s", loaderInfo.c_str());
 
                     size_t pPos = loaderInfo.find("permitted_path=");
                     if (pPos != std::string::npos) {
+                        LOGI("[SoLoader] 'permitted_path' keyword detected, parsing...");
                         std::string pPath = loaderInfo.substr(pPos + 15);
                         size_t end = pPath.find_first_of(", \n]");
                         if (end != std::string::npos) pPath = pPath.substr(0, end);
 
                         size_t lastColon = pPath.find_last_of(':');
                         std::string targetPath = (lastColon != std::string::npos) ? pPath.substr(lastColon + 1) : pPath;
+                        LOGI("[SoLoader] Extracted target path: %s", targetPath.c_str());
 
                         if (targetPath.find("/virtual/") != std::string::npos) {
-                            // Если мы в виртуальной среде, переопределяем пути на реальные игровые
+                            LOGI("[SoLoader] GSpace Virtual Path detected!");
                             GLOBAL_PKG_NAME = targetPath.substr(targetPath.find_last_of('/') + 1);
                             GLOBAL_CACHE_DIR = targetPath + "/cache";
 
-                            LOGI("[SoLoader] GSpace detected! PKG: %s", GLOBAL_PKG_NAME.c_str());
-                            LOGI("[SoLoader] GSpace Cache: %s", GLOBAL_CACHE_DIR.c_str());
-                            return; // Нашли виртуальные пути — выходим сразу
+                            LOGI("[SoLoader] !!! GSpace OVERRIDE !!! PKG: %s | Cache: %s", 
+                                 GLOBAL_PKG_NAME.c_str(), GLOBAL_CACHE_DIR.c_str());
+                            return; 
                         }
                     }
                 }
             }
 
-            // Логирование текущих результатов
-            if (!GLOBAL_PKG_NAME.empty()) LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
-            if (!GLOBAL_CACHE_DIR.empty()) LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
-
-            // Если всё получили и мы НЕ в GSpace родительском процессе
+            // Финальная проверка для обычных процессов
             if (!GLOBAL_PKG_NAME.empty() && !GLOBAL_CACHE_DIR.empty() && GLOBAL_PKG_NAME != "com.gspace.android") {
-                LOGI("[SoLoader] ok Virtual Paths initialized.");
+                LOGI("[SoLoader] <<< SUCCESS: All paths initialized for normal process");
                 return;
+            } else if (GLOBAL_PKG_NAME == "com.gspace.android") {
+                LOGW("[SoLoader] Found GSpace host package, but guest path not ready yet. Retrying...");
             }
+        } else {
+            LOGW("[SoLoader] appJob is NULL, ActivityThread not ready.");
         }
 
         usleep(500000);
         retry++;
     }
-    LOGE("[SoLoader] Failed to init virtual paths after many retries!");
+    LOGE("[SoLoader] !!! FAILED to init virtual paths after 100 retries !!!");
 }
-
-
 
 
 
