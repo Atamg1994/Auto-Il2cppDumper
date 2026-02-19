@@ -19,47 +19,43 @@ using namespace jni;
 // --- Глобальные данные ---
 
 JavaVM* g_vm_global = nullptr;
-
+static std::unique_ptr<jni::JvmRef<jni::kDefaultJvm>> g_jvm;
 std::string GLOBAL_CACHE_DIR = "";
 std::string GLOBAL_PKG_NAME = "";
 const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
 
 // --- Описание Java классов (JniBind 1.0.0 Beta) ---
 // 1. Описываем Application (хотя бы просто имя)
+
+// --- Описание Java классов (строго по правилам JniBind) ---
+static constexpr Class kClassLoader{"java/lang/ClassLoader",
+                                    Method{"toString", Return<jstring>{}, Params{}}
+};
+
+static constexpr Class kThread{"java/lang/Thread",
+                               Static {
+                                       Method{"currentThread", Return{Class{"java/lang/Thread"}}, Params{}}
+                               },
+                               Method{"getContextClassLoader", Return{kClassLoader}, Params{}}
+};
+
+static constexpr Class kFile{"java/io/File",
+                             Method{"getAbsolutePath", Return<jstring>{}, Params{}}
+};
+
+static constexpr Class kContext{"android/content/Context",
+                                Method{"getCacheDir", Return{kFile}, Params{}},
+                                Method{"getPackageName", Return<jstring>{}, Params{}}
+};
+
 static constexpr Class kApplication{"android/app/Application"};
 
-static constexpr Class kFile{
-    "java/io/File",
-    Method{"getAbsolutePath", Return<jstring>{}, Params{}}
+static constexpr Class kActivityThread{"android/app/ActivityThread",
+                                       Static {
+                                               Method{"currentApplication", Return{kApplication}, Params{}}
+                                       }
 };
 
-static constexpr Class kContext{
-    "android/content/Context",
-    Method{"getCacheDir", Return{kFile}, Params{}},
-    Method{"getPackageName", Return<jstring>{}, Params{}}
-};
-
-static constexpr Class kActivityThread{
-    "android/app/ActivityThread",
-    Static{
-        // ВАЖНО: сигнатура должна возвращать kApplication, а не kContext!
-        Method{"currentApplication", Return{kApplication}, Params{}}
-    }
-};
-
-// Описание для работы с потоком и лоадером
-// 1. Описываем классы без взаимных ссылок строками
-static constexpr Class kClassLoader{"java/lang/ClassLoader",
-    Method{"toString", Return<jstring>{}, Params{}}
-};
-
-// Возвращаем просто jobject, чтобы не путать компилятор
-static constexpr Class kThread{"java/lang/Thread",
-    Static {
-        Method{"currentThread", Return<jobject>{}, Params{}}
-    },
-    Method{"getContextClassLoader", Return<jobject>{}, Params{}}
-};
 
 
 // --- Проверка загрузки библиотеки ---
@@ -118,24 +114,26 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
 
 void init_virtual_paths(JNIEnv* env) {
     int retry = 0;
-    while (retry < 100) { // Увеличим количество попыток
-        // 1. Пытаемся получить доступ к статике
+    while (retry < 100) {
+        // 1. Получаем доступ к ActivityThread
         auto activityThread = jni::StaticRef<kActivityThread>{};
-
-        // 2. Вызываем метод
         auto appJob = activityThread("currentApplication");
 
-        // 3. Проверяем через явное приведение, что объект получен
         if (static_cast<jobject>(appJob) != nullptr) {
+            // ВАЖНО: Учим JniBind искать классы внутри загрузчика игры (для GSpace)
+            // Это решает проблему поиска классов в дочерних процессах
+            if (g_jvm) {
+                g_jvm->SetFallbackClassLoaderFromJObject(static_cast<jobject>(appJob));
+            }
+
             jni::LocalObject<kContext> app{std::move(appJob)};
 
-            // Проверяем имя пакета
+            // --- Логика 1: Стандартные пути ---
             auto pkgName = app("getPackageName");
             if (static_cast<jstring>(pkgName) != nullptr) {
                 GLOBAL_PKG_NAME = pkgName.Pin().ToString();
             }
 
-            // Проверяем кэш-директорию
             auto cacheFileObj = app("getCacheDir");
             if (static_cast<jobject>(cacheFileObj) != nullptr) {
                 jni::LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
@@ -144,63 +142,58 @@ void init_virtual_paths(JNIEnv* env) {
                     GLOBAL_CACHE_DIR = pathString.Pin().ToString();
                 }
             }
-        // --- Логика 2: Парсинг ClassLoader (для GSpace) ---
-                // --- Логика 2: ClassLoader (Исправленная) ---
-        auto curThreadJob = jni::StaticRef<kThread>{}("currentThread");
-        if (static_cast<jobject>(curThreadJob) != nullptr) {
-            // Оборачиваем результат в объект потока
-            jni::LocalObject<kThread> curThread{std::move(curThreadJob)};
-            auto loaderJob = curThread("getContextClassLoader");
 
-            if (static_cast<jobject>(loaderJob) != nullptr) {
-                // Оборачиваем в объект лоадера
-                jni::LocalObject<kClassLoader> loader{std::move(loaderJob)};
-                std::string loaderInfo = loader("toString").Pin().ToString();
-                
-                size_t pPos = loaderInfo.find("permitted_path=");
-                if (pPos != std::string::npos) {
-                    std::string pPath = loaderInfo.substr(pPos + 15);
-                    size_t end = pPath.find_first_of(", \n]");
-                    if (end != std::string::npos) pPath = pPath.substr(0, end);
+            // --- Логика 2: ClassLoader (Парсинг для GSpace) ---
+            auto curThreadJob = jni::StaticRef<kThread>{}("currentThread");
+            if (static_cast<jobject>(curThreadJob) != nullptr) {
+                jni::LocalObject<kThread> curThread{std::move(curThreadJob)};
+                auto loaderJob = curThread("getContextClassLoader");
 
-                    size_t lastColon = pPath.find_last_of(':');
-                    std::string targetPath = (lastColon != std::string::npos) ? pPath.substr(lastColon + 1) : pPath;
+                if (static_cast<jobject>(loaderJob) != nullptr) {
+                    jni::LocalObject<kClassLoader> loader{std::move(loaderJob)};
 
-                    if (targetPath.find("/virtual/") != std::string::npos) {
-                        GLOBAL_PKG_NAME = targetPath.substr(targetPath.find_last_of('/') + 1);
-                        GLOBAL_CACHE_DIR = targetPath + "/cache";
-                        LOGI("[SoLoader] GSpace detected! PKG: %s", GLOBAL_PKG_NAME.c_str());
-                        return;
+                    // Используем явное приведение к std::string для стабильности
+                    std::string loaderInfo { std::string(loader("toString").Pin().ToString()) };
+
+                    size_t pPos = loaderInfo.find("permitted_path=");
+                    if (pPos != std::string::npos) {
+                        std::string pPath = loaderInfo.substr(pPos + 15);
+                        size_t end = pPath.find_first_of(", \n]");
+                        if (end != std::string::npos) pPath = pPath.substr(0, end);
+
+                        size_t lastColon = pPath.find_last_of(':');
+                        std::string targetPath = (lastColon != std::string::npos) ? pPath.substr(lastColon + 1) : pPath;
+
+                        if (targetPath.find("/virtual/") != std::string::npos) {
+                            // Если мы в виртуальной среде, переопределяем пути на реальные игровые
+                            GLOBAL_PKG_NAME = targetPath.substr(targetPath.find_last_of('/') + 1);
+                            GLOBAL_CACHE_DIR = targetPath + "/cache";
+
+                            LOGI("[SoLoader] GSpace detected! PKG: %s", GLOBAL_PKG_NAME.c_str());
+                            LOGI("[SoLoader] GSpace Cache: %s", GLOBAL_CACHE_DIR.c_str());
+                            return; // Нашли виртуальные пути — выходим сразу
+                        }
                     }
                 }
             }
-         }
 
+            // Логирование текущих результатов
+            if (!GLOBAL_PKG_NAME.empty()) LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
+            if (!GLOBAL_CACHE_DIR.empty()) LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
 
-
-
-
-
-            if (!GLOBAL_PKG_NAME.empty() ) {
-                LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
-            }
-            if (!GLOBAL_CACHE_DIR.empty() ) {
-                LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
-            }
-            // Если всё получили — выходим
-            if (!GLOBAL_PKG_NAME.empty() && !GLOBAL_CACHE_DIR.empty()) {
-                LOGI("[SoLoader] ok Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
-                LOGI("[SoLoader] ok Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
+            // Если всё получили и мы НЕ в GSpace родительском процессе
+            if (!GLOBAL_PKG_NAME.empty() && !GLOBAL_CACHE_DIR.empty() && GLOBAL_PKG_NAME != "com.gspace.android") {
+                LOGI("[SoLoader] ok Virtual Paths initialized.");
                 return;
             }
         }
 
-        // Если не получили — ждем дольше, возможно процесс еще не инициализирован
         usleep(500000);
         retry++;
     }
     LOGE("[SoLoader] Failed to init virtual paths after many retries!");
 }
+
 
 
 
@@ -306,7 +299,7 @@ void dump_thread() {
         return;
     // ВОТ ЭТА СТРОКА: Инициализирует JniBind для этого потока
     LOGI("[SoLoader] jni::ThreadGuard guard");
-    jni::ThreadGuard guard; 
+    jni::ThreadGuard guard;
     LOGI("[SoLoader] run dump_thread-> init_virtual_paths");
     init_virtual_paths(env);
 
@@ -335,14 +328,14 @@ void dump_thread() {
         if (il2cpp_handle) {
 
             std::string androidDataPath =
-                "/storage/emulated/0/Documents/" + GLOBAL_PKG_NAME + "-dump.cs";
+                    "/storage/emulated/0/Documents/" + GLOBAL_PKG_NAME + "-dump.cs";
 
             if (il2cpp_api_init(il2cpp_handle)) {
                 il2cpp_dump(androidDataPath.c_str());
             }
         }
     }
- LOGI("[SoLoader] 2 run dump_thread-> init_virtual_paths");
+    LOGI("[SoLoader] 2 run dump_thread-> init_virtual_paths");
     init_virtual_paths(env);
     g_vm_global->DetachCurrentThread();
 }
@@ -350,7 +343,7 @@ void dump_thread() {
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 
     g_vm_global = vm;
-
+    g_jvm = std::make_unique<jni::JvmRef<jni::kDefaultJvm>>(vm);
     static jni::JvmRef<jni::kDefaultJvm> jvm{vm};
 
     LOGI("[SoLoader] JNI System Initialized (Release 1.5.0)");
