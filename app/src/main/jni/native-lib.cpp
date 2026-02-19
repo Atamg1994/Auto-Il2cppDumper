@@ -180,7 +180,7 @@ void dump_thread() {
           if (elapsed >= timeout) {
                 LOGI("[SoLoader] Timeout reached: %s not found. Killing thread.", libTarget);
                 dump = false;
-				back;
+				break;
           }
           sleep(1);
           elapsed++;
@@ -188,8 +188,8 @@ void dump_thread() {
 	
     sleep(Sleep);
     if (dump) {
-    void* handle = dlopen(libTarget, RTLD_NOW);
-		if (handle) {
+    void* il2cpp_handle = dlopen(libTarget, RTLD_NOW);
+		if (il2cpp_handle) {
 			std::string androidDataPath = "/storage/emulated/0/Documents/" + GLOBAL_PKG_NAME + "-dump.cs";
 			LOGI("[SoLoader] Start dumping: %s:%s", GLOBAL_PKG_NAME.c_str(),androidDataPath.c_str());
 			if(il2cpp_api_init(il2cpp_handle)){
