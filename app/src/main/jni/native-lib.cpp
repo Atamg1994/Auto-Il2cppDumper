@@ -105,20 +105,21 @@ void init_virtual_paths(JNIEnv* env) {
     while (retry < 50) {
 
         auto activityThread = jni::StaticRef<kActivityThread>{};
+
         auto app = activityThread("currentApplication");
 
-        if (app.get() != nullptr) {
+        if (!app.IsNull()) {
 
             jni::LocalObject<kContext> ctx{std::move(app)};
 
             auto pkgName = ctx("getPackageName");
-            GLOBAL_PKG_NAME = jni::ToString(env, pkgName.get());
+            GLOBAL_PKG_NAME = pkgName.ToString();
 
             auto cacheFileObj = ctx("getCacheDir");
             jni::LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
 
             auto pathString = cacheFile("getAbsolutePath");
-            GLOBAL_CACHE_DIR = jni::ToString(env, pathString.get());
+            GLOBAL_CACHE_DIR = pathString.ToString();
 
             LOGI("[SoLoader] Virtual Package: %s",
                  GLOBAL_PKG_NAME.c_str());
@@ -132,6 +133,7 @@ void init_virtual_paths(JNIEnv* env) {
         retry++;
     }
 }
+
 
 
 
