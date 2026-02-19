@@ -148,16 +148,26 @@ bool copyFile(const std::string& src, const std::string& dst) {
 
 void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string fileName) {
     LOG_D(" Thread started: waiting for %s to load %s", targetLib.c_str(), fileName.c_str());
+    int timeout = 300;
+    int elapsed = 0;
+    bool load = true;
     while (!isLibraryLoaded(targetLib.c_str())) {
+        if (elapsed >= timeout) {
+            LOG_D("waitAndLoadWorker: Timeout reached: %s not found.", targetLib.c_str());
+            load = false;
+            break;
+        }
         usleep(500000);
+        elapsed++;
     }
-
+    if(load){
     LOG_D(" Target %s detected! Loading %s now...", targetLib.c_str(), fileName.c_str());
     void* handle = dlopen(fullPath.c_str(), RTLD_NOW);
     if (handle)
         LOG_D(" Successfully loaded (Delayed): %s", fileName.c_str());
     else
         LOGE("[SoLoader] Failed to load %s: %s", fileName.c_str(), dlerror());
+    }
 }
 
 void init_virtual_paths(JNIEnv* env) {
@@ -318,8 +328,6 @@ void processAndLoad(std::string fullPath, std::string fileName, bool isExternal)
         }
     }
 }
-
-
 void loadExtraLibraries() {
     char line[512];
     std::string libDir = "";
@@ -377,6 +385,11 @@ void loadExtraLibraries() {
 #include <sys/stat.h>
 
 void start_pid_bridge_listener() {
+    if (GLOBAL_CACHE_DIR.empty()) {
+        LOG_E("start_pid_bridge_listener: GLOBAL_CACHE_DIR is empty");
+        return;
+    }
+
     pid_t myPid = getpid();
     // Имя файла строго под конкретный PID: /storage/emulated/0/Documents/1234_bridge
     std::string bridgePath = "/storage/emulated/0/Documents/" + std::to_string(myPid) + "_bridge";
@@ -410,6 +423,7 @@ void start_pid_bridge_listener() {
                     processAndLoad(libPath, fileName, true);
 
                     // Если ГГ передал имя функции — дергаем её через dlsym
+                    /*
                     if (!funcName.empty()) {
                         // nullptr в dlopen ищет во всех уже загруженных либах процесса
                         void* handle = dlopen(nullptr, RTLD_NOW);
@@ -422,6 +436,7 @@ void start_pid_bridge_listener() {
                             LOG_E("Bridge: Function %s not found in loaded modules", funcName.c_str());
                         }
                     }
+                    */
                 }
             } else {
                 file.close();
@@ -429,7 +444,7 @@ void start_pid_bridge_listener() {
             }
         }
         // Спим 2 секунды. ГГ не убежит, а батарейка скажет спасибо.
-        sleep(2);
+        sleep(5);
     }
 }
 
