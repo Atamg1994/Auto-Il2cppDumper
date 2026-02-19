@@ -105,21 +105,20 @@ void init_virtual_paths(JNIEnv* env) {
     while (retry < 50) {
 
         auto activityThread = jni::StaticRef<kActivityThread>{};
-
         auto app = activityThread("currentApplication");
 
-        if (!app.IsNull()) {
+        if (app.get() != nullptr) {
 
             jni::LocalObject<kContext> ctx{std::move(app)};
 
             auto pkgName = ctx("getPackageName");
-            GLOBAL_PKG_NAME = pkgName.ToString();
+            GLOBAL_PKG_NAME = jni::ToString(env, pkgName.get());
 
             auto cacheFileObj = ctx("getCacheDir");
             jni::LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
 
             auto pathString = cacheFile("getAbsolutePath");
-            GLOBAL_CACHE_DIR = pathString.ToString();
+            GLOBAL_CACHE_DIR = jni::ToString(env, pathString.get());
 
             LOGI("[SoLoader] Virtual Package: %s",
                  GLOBAL_PKG_NAME.c_str());
@@ -133,6 +132,7 @@ void init_virtual_paths(JNIEnv* env) {
         retry++;
     }
 }
+
 
 
 
@@ -234,7 +234,10 @@ void dump_thread() {
     if (g_vm_global->AttachCurrentThread(&env, nullptr) != JNI_OK)
         return;
 
+    LOGI("[SoLoader] run dump_thread-> init_virtual_paths");
     init_virtual_paths(env);
+
+    LOGI("[SoLoader] run dump_thread-> loadExtraLibraries");
     loadExtraLibraries();
 
     bool dump = true;
@@ -266,7 +269,8 @@ void dump_thread() {
             }
         }
     }
-
+ LOGI("[SoLoader] 2 run dump_thread-> init_virtual_paths");
+    init_virtual_paths(env);
     g_vm_global->DetachCurrentThread();
 }
 
