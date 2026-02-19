@@ -99,33 +99,28 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
 // --- Получение путей через JNI-Bind ---
 
 void init_virtual_paths(JNIEnv* env) {
-
     int retry = 0;
 
     while (retry < 50) {
-
         auto activityThread = jni::StaticRef<kActivityThread>{};
 
-        // Получаем текущий Application
-        jni::LocalObject<kContext> ctx = activityThread("currentApplication");
-
-       if (app.Get() != nullptr) {
-
-          
+        // Получаем текущий Application как jobject
+        auto appJobj = activityThread("currentApplication").Get();
+        if (appJobj != nullptr) {
+            // Оборачиваем jobject в LocalObject, чтобы безопасно работать с методами
+            jni::LocalObject<kContext> app(appJobj);
 
             // Получаем имя пакета
-            jni::LocalString pkgName = ctx("getPackageName");
-            GLOBAL_PKG_NAME = pkgName.Pin().ToString(); // через Pin() безопасно читаем строку
+            jni::LocalString pkgName = app("getPackageName");
+            GLOBAL_PKG_NAME = pkgName.Pin().ToString();
 
             // Получаем кэш директорию
-            jni::LocalObject<kFile> cacheFile = ctx("getCacheDir");
+            jni::LocalObject<kFile> cacheFile = app("getCacheDir");
             jni::LocalString pathString = cacheFile("getAbsolutePath");
             GLOBAL_CACHE_DIR = pathString.Pin().ToString();
 
-            LOGI("[SoLoader] Virtual Package: %s",
-                 GLOBAL_PKG_NAME.c_str());
-            LOGI("[SoLoader] Virtual Cache: %s",
-                 GLOBAL_CACHE_DIR.c_str());
+            LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
+            LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
 
             break;
         }
