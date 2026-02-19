@@ -105,10 +105,12 @@ void init_virtual_paths(JNIEnv* env) {
         auto activityThread = jni::StaticRef<kActivityThread>{};
 
         // Получаем текущий Application как jobject
-        auto appJobj = activityThread("currentApplication");
-        if (appJobj != nullptr) {
-            // Оборачиваем jobject в LocalObject, чтобы безопасно работать с методами
-            jni::LocalObject<kContext> app(appJobj);
+        auto appJob = activityThread("currentApplication");
+
+// Явно приводим к jobject для сравнения с nullptr
+if (jobject{appJob} != nullptr) {
+    // Теперь оборачиваем в LocalObject для работы с методами Context
+    jni::LocalObject<kContext> app{std::move(appJob)}
 
             // Получаем имя пакета
             jni::LocalString pkgName = app("getPackageName");
