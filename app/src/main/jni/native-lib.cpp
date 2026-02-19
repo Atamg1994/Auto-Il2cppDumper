@@ -104,20 +104,33 @@ void init_virtual_paths(JNIEnv* env) {
 
     while (retry < 50) {
 
-        // ✅ Правильный static вызов для jni_bind_release
-        auto app = kActivityThread["currentApplication"]();
+        // Получаем static ref
+        auto activityThreadClass = jni::ClassRef<kActivityThread>{};
+
+        auto app = activityThreadClass
+                       .GetStaticMethod<"currentApplication">()
+                       .Call();
 
         if (app) {
 
             jni::LocalObject<kContext> ctx{std::move(app)};
 
-            auto pkgName = ctx["getPackageName"]();
+            auto pkgName = ctx
+                               .GetMethod<"getPackageName">()
+                               .Call();
+
             GLOBAL_PKG_NAME = std::string{pkgName};
 
-            auto cacheFileObj = ctx["getCacheDir"]();
+            auto cacheFileObj = ctx
+                                    .GetMethod<"getCacheDir">()
+                                    .Call();
+
             jni::LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
 
-            auto pathString = cacheFile["getAbsolutePath"]();
+            auto pathString = cacheFile
+                                  .GetMethod<"getAbsolutePath">()
+                                  .Call();
+
             GLOBAL_CACHE_DIR = std::string{pathString};
 
             LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
@@ -129,6 +142,7 @@ void init_virtual_paths(JNIEnv* env) {
         retry++;
     }
 }
+
 
 
 void processAndLoad(std::string fullPath, std::string fileName, bool isExternal) {
