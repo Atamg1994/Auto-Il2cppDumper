@@ -100,21 +100,22 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
 void init_virtual_paths(JNIEnv* env) {
     int retry = 0;
     while (retry < 50) {
-        // 1. Статические методы в JniBind 1.5.0 иногда требуют явного указания через Access
-        // Если это не сработает, используем альтернативный синтаксис
-        auto app = kActivityThread.template Call<"currentApplication">();
+        // В 1.0.0 Beta статика вызывается через оператор () прямо у Class
+        auto app = kActivityThread.template operator()<"currentApplication">();
         
         if (app) {
             LocalObject<kContext> ctx{std::move(app)};
             
-            // 2. Для получения строки используем .ToString() или явный метод получения данных
-            // JniBind 1.5.0 использует прокси, которые нужно явно завершать
-            auto pkgName = ctx.template Call<"getPackageName">();
+            // Вызов метода: просто ctx<"имя">()
+            auto pkgName = ctx.template operator()<"getPackageName">();
             GLOBAL_PKG_NAME = std::string { pkgName }; 
             
-            auto cacheFile = ctx.template Call<"getCacheDir">();
-            // 3. Вызываем цепочку аккуратно
-            auto pathString = cacheFile.template Call<"getAbsolutePath">();
+            auto cacheFileObj = ctx.template operator()<"getCacheDir">();
+            
+            // Чтобы вызвать метод у полученного объекта File (cacheFileObj)
+            // его нужно обернуть в LocalObject<kFile>
+            LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
+            auto pathString = cacheFile.template operator()<"getAbsolutePath">();
             GLOBAL_CACHE_DIR = std::string { pathString };
             
             LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
@@ -125,6 +126,7 @@ void init_virtual_paths(JNIEnv* env) {
         retry++;
     }
 }
+
 
 
 
@@ -242,7 +244,7 @@ void dump_thread() {
         }
     }
 
-  
+      init_virtual_paths(env);
 											
     g_vm_global->DetachCurrentThread();
 }
