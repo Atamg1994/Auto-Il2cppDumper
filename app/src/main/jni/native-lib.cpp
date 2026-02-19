@@ -100,22 +100,22 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
 void init_virtual_paths(JNIEnv* env) {
     int retry = 0;
     while (retry < 50) {
-        // В 1.0.0 Beta статика вызывается через оператор () прямо у Class
-        auto app = kActivityThread.template operator()<"currentApplication">();
+        // 1. Статика вызывается через Access("имя") в этой версии
+        auto app = kActivityThread.Access("currentApplication");
         
         if (app) {
             LocalObject<kContext> ctx{std::move(app)};
             
-            // Вызов метода: просто ctx<"имя">()
-            auto pkgName = ctx.template operator()<"getPackageName">();
+            // 2. Методы вызываются через оператор (): объект("имя_метода")
+            // Никаких < > и никаких .Call
+            auto pkgName = ctx("getPackageName");
             GLOBAL_PKG_NAME = std::string { pkgName }; 
             
-            auto cacheFileObj = ctx.template operator()<"getCacheDir">();
+            auto cacheFileObj = ctx("getCacheDir");
             
-            // Чтобы вызвать метод у полученного объекта File (cacheFileObj)
-            // его нужно обернуть в LocalObject<kFile>
+            // 3. Оборачиваем результат в класс File, чтобы вызвать его метод
             LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
-            auto pathString = cacheFile.template operator()<"getAbsolutePath">();
+            auto pathString = cacheFile("getAbsolutePath");
             GLOBAL_CACHE_DIR = std::string { pathString };
             
             LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
@@ -126,6 +126,7 @@ void init_virtual_paths(JNIEnv* env) {
         retry++;
     }
 }
+
 
 
 
