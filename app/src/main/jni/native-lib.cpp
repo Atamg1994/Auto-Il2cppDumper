@@ -105,7 +105,7 @@ void init_virtual_paths(JNIEnv* env) {
         auto activityThread = jni::StaticRef<kActivityThread>{};
 
         // Получаем текущий Application как jobject
-        auto appJobj = activityThread("currentApplication").Get();
+        auto appJobj = activityThread("currentApplication");
         if (appJobj != nullptr) {
             // Оборачиваем jobject в LocalObject, чтобы безопасно работать с методами
             jni::LocalObject<kContext> app(appJobj);
