@@ -104,37 +104,29 @@ void init_virtual_paths(JNIEnv* env) {
 
     while (retry < 50) {
 
-        // Получаем static ref
-        auto activityThreadClass = jni::ClassRef<kActivityThread>{};
+        // Получаем static ref к ActivityThread
+        auto activityThread = jni::StaticRef<kActivityThread>{};
 
-        auto app = activityThreadClass
-                       .GetStaticMethod<"currentApplication">()
-                       .Call();
+        auto app = activityThread("currentApplication");
 
         if (app) {
 
             jni::LocalObject<kContext> ctx{std::move(app)};
 
-            auto pkgName = ctx
-                               .GetMethod<"getPackageName">()
-                               .Call();
-
+            auto pkgName = ctx("getPackageName");
             GLOBAL_PKG_NAME = std::string{pkgName};
 
-            auto cacheFileObj = ctx
-                                    .GetMethod<"getCacheDir">()
-                                    .Call();
-
+            auto cacheFileObj = ctx("getCacheDir");
             jni::LocalObject<kFile> cacheFile{std::move(cacheFileObj)};
 
-            auto pathString = cacheFile
-                                  .GetMethod<"getAbsolutePath">()
-                                  .Call();
-
+            auto pathString = cacheFile("getAbsolutePath");
             GLOBAL_CACHE_DIR = std::string{pathString};
 
-            LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
-            LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
+            LOGI("[SoLoader] Virtual Package: %s",
+                 GLOBAL_PKG_NAME.c_str());
+            LOGI("[SoLoader] Virtual Cache: %s",
+                 GLOBAL_CACHE_DIR.c_str());
+
             break;
         }
 
@@ -142,6 +134,7 @@ void init_virtual_paths(JNIEnv* env) {
         retry++;
     }
 }
+
 
 
 
