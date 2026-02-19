@@ -25,6 +25,8 @@ std::string GLOBAL_PKG_NAME = "";
 const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
 
 // --- Описание Java классов (JniBind 1.0.0 Beta) ---
+// 1. Описываем Application (хотя бы просто имя)
+static constexpr Class kApplication{"android/app/Application"};
 
 static constexpr Class kFile{
     "java/io/File",
@@ -40,9 +42,11 @@ static constexpr Class kContext{
 static constexpr Class kActivityThread{
     "android/app/ActivityThread",
     Static{
-        Method{"currentApplication", Return{kContext}, Params{}}
+        // ВАЖНО: сигнатура должна возвращать kApplication, а не kContext!
+        Method{"currentApplication", Return{kApplication}, Params{}}
     }
 };
+
 
 // --- Проверка загрузки библиотеки ---
 
