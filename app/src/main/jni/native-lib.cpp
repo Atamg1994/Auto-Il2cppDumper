@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <memory>
 #include <string>
 #include <thread>
 #include <dlfcn.h>
@@ -16,15 +17,16 @@
 using namespace jni;
 
 // --- Глобальные данные ---
-													  
+			   
 JavaVM* g_vm_global = nullptr;
+static std::unique_ptr<JvmRef<kDefaultJvm>> g_jvm_ref; // Глобальный реф для JNI Bind
 std::string GLOBAL_CACHE_DIR = "";
 std::string GLOBAL_PKG_NAME = "";
 const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
 
-															   
-																									  
-// --- Описание Java классов (Синтаксис JNI-Bind 1.5.0 + C++20) ---
+				  
+						   
+// --- Описание Java классов ---
 static constexpr Class kFile{"java/io/File", 
     Method{"getAbsolutePath", Return<jstring>{}}
 };
@@ -77,7 +79,7 @@ bool copyFile(const std::string& src, const std::string& dst) {
     return true;
 }
 
-// Функция-воркер для ожидания конкретной либы (WL)
+																						 
 void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string fileName) {
     LOGI("[SoLoader] Thread started: waiting for %s to load %s", targetLib.c_str(), fileName.c_str());
     while (!isLibraryLoaded(targetLib.c_str())) {
@@ -89,18 +91,22 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
     else LOGE("[SoLoader] Failed to load %s: %s", fileName.c_str(), dlerror());
 }
 
-// Получение путей через JNI-Bind (специально для виртуалки)
+// Получение путей через JNI-Bind (универсальный синтаксис)
 void init_virtual_paths(JNIEnv* env) {
-    JvmRef<kDefaultJvm> jvm{g_vm_global};
-    
+    // В 1.5.0 JvmRef инициализирован глобально, здесь просто используем возможности
+	
     int retry = 0;
     while (retry < 50) {
-        auto app = Class<kActivityThread>::Call<"currentApplication">();
+        // Используем Call("name") без < > для стабильности компиляции на Clang
+        auto app = Class<kActivityThread>::Call("currentApplication");
         if (app) {
-            LocalObject<kContext> ctx{app};
-            GLOBAL_PKG_NAME = ctx.Call<"getPackageName">();
-            auto cacheFile = ctx.Call<"getCacheDir">();
-            GLOBAL_CACHE_DIR = cacheFile.Call<"getAbsolutePath">();
+            LocalObject<kContext> ctx{std::move(app)};
+            
+            // Явное приведение типов (std::string) убирает ошибку "no viable overloaded ="
+            GLOBAL_PKG_NAME = (std::string)ctx.Call("getPackageName");
+            
+            auto cacheFile = ctx.Call("getCacheDir");
+            GLOBAL_CACHE_DIR = (std::string)cacheFile.Call("getAbsolutePath");
             
             LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
             LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
@@ -111,10 +117,10 @@ void init_virtual_paths(JNIEnv* env) {
     }
 }
 
-// Универсальная загрузка
+											  
 void processAndLoad(std::string fullPath, std::string fileName, bool isExternal) {
     std::string finalPath = fullPath;
-	
+ 
     if (isExternal) {
         if (GLOBAL_CACHE_DIR.empty()) return;
         finalPath = GLOBAL_CACHE_DIR + "/" + fileName;
@@ -138,7 +144,7 @@ void processAndLoad(std::string fullPath, std::string fileName, bool isExternal)
 }
 
 void loadExtraLibraries() {
-    // 1. Внутреннее сканирование
+													   
     char line[512]; std::string libDir = "";
     FILE *fp = fopen("/proc/self/maps", "rt");
     if (fp) {
@@ -164,7 +170,7 @@ void loadExtraLibraries() {
         }
     }
 
-    // 2. Внешнее сканирование
+												 
     if (GLOBAL_PKG_NAME.empty()) return;
 #if defined(__aarch64__)
     std::string arch = "arm64-v8a";
@@ -186,14 +192,14 @@ void loadExtraLibraries() {
     }
 }
 
-// --- Поток дампа ---
+								
 #define libTarget "libil2cpp.so"
 
 void dump_thread() {
     JNIEnv* env;
     LOGI("[SoLoader] AttachCurrentThread.");
     if (g_vm_global->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
-											 
+			
     
     init_virtual_paths(env);
     loadExtraLibraries();
@@ -211,7 +217,7 @@ void dump_thread() {
         elapsed++;
     }
 	
-				 
+	 
     if (dump) {
         LOGI("[SoLoader] %s detected. Sleeping before dump...", libTarget);
         sleep(Sleep);
@@ -225,7 +231,7 @@ void dump_thread() {
         }
     }
 
-							 
+		
     LOGI("[SoLoader] DetachCurrentThread.");
     g_vm_global->DetachCurrentThread();
 }
@@ -233,10 +239,11 @@ void dump_thread() {
 // --- JNI Вход ---
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     g_vm_global = vm;
-																		 
-    LOGI("[SoLoader] JNI System Initialized");
+    
+    // Инициализация JNI Bind (согласно разделу LifeCycle документации)
+    static auto jvm{std::make_unique<jni::JvmRef<jni::kDefaultJvm>>(vm)};
+    
+    LOGI("[SoLoader] JNI System Initialized (Release 1.5.0)");
     std::thread(dump_thread).detach();
     return JNI_VERSION_1_6;
 }
-
-
