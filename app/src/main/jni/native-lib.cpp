@@ -99,18 +99,22 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
 void init_virtual_paths(JNIEnv* env) {
     int retry = 0;
     while (retry < 50) {
-        // Добавили .template перед Call
-        auto app = kActivityThread.template Call<"currentApplication">();
+        // 1. Статические методы в JniBind 1.5.0 иногда требуют явного указания через Access
+        // Если это не сработает, используем альтернативный синтаксис
+        auto app = kActivityThread.Access<"currentApplication">();
         
         if (app) {
             LocalObject<kContext> ctx{std::move(app)};
             
-            // Используем c_str() или явное приведение к std::string 
-            // В JniBind 1.5.0 обычно работает прямое приведение или .ToString()
-            GLOBAL_PKG_NAME = std::string(ctx.template Call<"getPackageName">());
+            // 2. Для получения строки используем .ToString() или явный метод получения данных
+            // JniBind 1.5.0 использует прокси, которые нужно явно завершать
+            auto pkgName = ctx.template Call<"getPackageName">();
+            GLOBAL_PKG_NAME = std::string { pkgName }; 
             
             auto cacheFile = ctx.template Call<"getCacheDir">();
-            GLOBAL_CACHE_DIR = std::string(cacheFile.template Call<"getAbsolutePath">());
+            // 3. Вызываем цепочку аккуратно
+            auto pathString = cacheFile.template Call<"getAbsolutePath">();
+            GLOBAL_CACHE_DIR = std::string { pathString };
             
             LOGI("[SoLoader] Virtual Package: %s", GLOBAL_PKG_NAME.c_str());
             LOGI("[SoLoader] Virtual Cache: %s", GLOBAL_CACHE_DIR.c_str());
@@ -120,6 +124,7 @@ void init_virtual_paths(JNIEnv* env) {
         retry++;
     }
 }
+
 
 
 			 
