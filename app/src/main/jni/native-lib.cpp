@@ -15,7 +15,7 @@
 #include "Includes/jni_bind_release.h"
 #include <sys/syscall.h>
 #include <android/log.h> // На всякий случай
-#include <csignal>
+
 
 
 
@@ -36,7 +36,6 @@ JavaVM* g_vm_global = nullptr;
 static std::unique_ptr<jni::JvmRef<jni::kDefaultJvm>> g_jvm;
 std::string GLOBAL_CACHE_DIR = "";
 std::string GLOBAL_PKG_NAME = "";
-std::string GLOBAL_CLEANUP_PATH;
 const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
 
 static constexpr Class kClassLoader{"java/lang/ClassLoader",
@@ -101,35 +100,25 @@ void recursive_mkdir(std::string path) {
 // Глобальная переменная для пути (нужна обработчику сигналов)
 
 
-void fast_clear_all_cache(int signum) {
+void fast_clear_all_cache(const std::string& cachePath) {
     // В обработчике сигналов нельзя использовать тяжелые функции, 
     // но remove() и opendir() обычно отрабатывают нормально.
-    DIR* dir = opendir(GLOBAL_CLEANUP_PATH.c_str());
+    DIR* dir = opendir(cachePath.c_str());
     if (dir) {
         struct dirent* entry;
         while ((entry = readdir(dir)) != nullptr) {
             if (entry->d_name[0] == '.') continue;
-            remove((GLOBAL_CLEANUP_PATH + "/" + entry->d_name).c_str());
+            remove((cachePath + "/" + entry->d_name).c_str());
         }
         closedir(dir);
     }
 
     // После очистки — выходим штатно, чтобы не блокировать закрытие
-    if (signum != 0) {
-        signal(signum, SIG_DFL);
-        raise(signum);
-    }
+  
 }
 
 // Вызови это один раз в JNI_OnLoad
-void setup_exit_hooks(std::string cachePath) {
-    GLOBAL_CLEANUP_PATH = cachePath;
 
-    // Ловим штатное завершение, вылеты и прерывания
-    signal(SIGTERM, fast_clear_all_cache); // Завершение системой
-    signal(SIGINT,  fast_clear_all_cache); // Прерывание
-    signal(SIGABRT, fast_clear_all_cache); // Вызов abort()
-}
 
 
 void cleanup_old_cache(const std::string& cachePath) {
@@ -466,7 +455,6 @@ void start_pid_bridge_listener() {
 #define libTarget "libil2cpp.so"
 
 void dump_thread() {
-
     JNIEnv* env;
     if (g_vm_global->AttachCurrentThread(&env, nullptr) != JNI_OK)
         return;
@@ -479,8 +467,8 @@ void dump_thread() {
     init_virtual_paths(env);
     LOG_D(" Start initialize process finished");
     LOG_D("loadExtraLibraries via virtual path");
-    cleanup_old_cache(GLOBAL_CACHE_DIR);
-    setup_exit_hooks(GLOBAL_CACHE_DIR);
+    fast_clear_all_cache(GLOBAL_CACHE_DIR);
+    
     std::thread(start_pid_bridge_listener).detach();
     loadExtraLibraries();
 
