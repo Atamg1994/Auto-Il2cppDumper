@@ -16,7 +16,7 @@
 #include <sys/syscall.h>
 #include <android/log.h> // На всякий случай
 
-// Твой личный тег для логов
+
 #undef LOG_TAG
 #define LOG_TAG "SoLoader"
 
@@ -25,14 +25,10 @@
 #define LOG_E(fmt, ...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
 #define LOG_W(fmt, ...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
 #define LOG_I(fmt, ...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
-
 #define TO_STR(view) std::string(view)
-
-
 
 using namespace jni;
 
-// --- Глобальные данные ---
 
 JavaVM* g_vm_global = nullptr;
 static std::unique_ptr<jni::JvmRef<jni::kDefaultJvm>> g_jvm;
@@ -40,48 +36,40 @@ std::string GLOBAL_CACHE_DIR = "";
 std::string GLOBAL_PKG_NAME = "";
 const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
 
-// --- Описание Java классов (JniBind 1.0.0 Beta) ---
-// 1. Описываем Application (хотя бы просто имя)
-
-// --- Описание Java классов (строго по правилам JniBind) ---
 static constexpr Class kClassLoader{"java/lang/ClassLoader",
-                                    Method{"toString", Return<jstring>{}, Params{}}
+Method{"toString", Return<jstring>{}, Params{}}
 };
 
 static constexpr Class kThread{"java/lang/Thread",
-                               Static {
-                                       Method{"currentThread", Return{Class{"java/lang/Thread"}}, Params{}}
-                               },
-                               Method{"getContextClassLoader", Return{kClassLoader}, Params{}}
+Static {
+ Method{"currentThread", Return{Class{"java/lang/Thread"}}, Params{}}
+},
+Method{"getContextClassLoader", Return{kClassLoader}, Params{}}
 };
 
 static constexpr Class kFile{"java/io/File",
-                             Method{"getAbsolutePath", Return<jstring>{}, Params{}}
+Method{"getAbsolutePath", Return<jstring>{}, Params{}}
 };
 
 static constexpr Class kContext{"android/content/Context",
-                                Method{"getCacheDir", Return{kFile}, Params{}},
-                                Method{"getPackageName", Return<jstring>{}, Params{}}
+Method{"getCacheDir", Return{kFile}, Params{}},
+Method{"getPackageName", Return<jstring>{}, Params{}}
 };
 
 static constexpr Class kApplication{"android/app/Application"};
 
 static constexpr Class kAppBindData{"android/app/ActivityThread$AppBindData",
-                                    Field{"processName", jstring{}}
+Field{"processName", jstring{}}
 };
 
 static constexpr Class kActivityThread{"android/app/ActivityThread",
-                                       Static {
-                                               Method{"currentApplication", Return{kApplication}, Params{}},
-                                               Method{"currentActivityThread", Return{Class{"android/app/ActivityThread"}}, Params{}}
-                                       },
-        // Поле, содержащее данные о запущенном процессе
-                                       Field{"mBoundApplication", kAppBindData}
+Static {
+Method{"currentApplication", Return{kApplication}, Params{}},
+Method{"currentActivityThread", Return{Class{"android/app/ActivityThread"}}, Params{}}
+},
+Field{"mBoundApplication", kAppBindData}
 };
 
-
-
-// --- Проверка загрузки библиотеки ---
 
 bool isLibraryLoaded(const char *libraryName) {
     char line[512] = {0};
@@ -97,8 +85,6 @@ bool isLibraryLoaded(const char *libraryName) {
     }
     return false;
 }
-
-// --- Вспомогательные функции ---
 
 void recursive_mkdir(std::string path) {
     std::stringstream ss(path);
@@ -150,7 +136,7 @@ bool copyFile(const std::string& src, const std::string& dst) {
     return true;
 }
 
-void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string fileName) {
+void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string fileName, bool isExternal) {
     LOG_D(" Thread started: waiting for %s to load %s", targetLib.c_str(), fileName.c_str());
     int timeout = 800;
     int elapsed = 0;
@@ -165,12 +151,17 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
         elapsed++;
     }
     if(load){
-    LOG_D(" Target %s detected! Loading %s now...", targetLib.c_str(), fileName.c_str());
-    void* handle = dlopen(fullPath.c_str(), RTLD_NOW);
-    if (handle)
-        LOG_D(" Successfully loaded (Delayed): %s", fileName.c_str());
-    else
-        LOGE("[SoLoader] Failed to load %s: %s", fileName.c_str(), dlerror());
+        LOG_D(" Target %s detected! Loading %s now...", targetLib.c_str(), fileName.c_str());
+        void* handle = dlopen(fullPath.c_str(), RTLD_NOW);
+        if (handle) {
+            LOG_D(" Successfully loaded (Delayed): %s", fileName.c_str());
+        }else {
+            LOGE("[SoLoader] Failed to load %s: %s", fileName.c_str(), dlerror());
+        }
+        if (isExternal) {
+            remove(fullPath.c_str());
+            LOG_D("Cache cleared: %s", fileName.c_str());
+        }
     }
 }
 
@@ -285,44 +276,30 @@ void processAndLoad(std::string fullPath, std::string fileName, bool isExternal)
 
     if (isExternal) {
         if (GLOBAL_CACHE_DIR.empty()) return;
-
         pid_t pid = getpid();
         long tid = syscall(SYS_gettid);
-
-        // Весь "фарш" (PID, TID, Маркер загрузки) — в один тег
-        // Формат тега: _PID_TID_Load_
         std::string tag = "_" + std::to_string(pid) + "_" + std::to_string(tid) + "_Load_";
-
-        // Вставляем тег СРАЗУ после "lib" (3-я позиция), чтобы не ломать префиксы и суффиксы
         if (uniqueName.find("lib") == 0) {
             uniqueName.insert(3, tag);
         } else {
             uniqueName.insert(0, tag);
         }
-
         finalPath = GLOBAL_CACHE_DIR + "/" + uniqueName;
-
         if (!copyFile(fullPath, finalPath)) return;
         LOG_D("Unique instance created: %s", uniqueName.c_str());
     }
-
-    // 1. Конфиги (frida.config.so, unityconfig.so) — копируем, но не грузим через dlopen
     if (uniqueName.find("config") != std::string::npos || uniqueName.find(".json") != std::string::npos) {
         LOG_D("Config detected, skipping dlopen: %s", uniqueName.c_str());
         return;
     }
-
-    // 2. Режим ожидания (lib_PID_TID_Load_WL_target.so)
     size_t wlPos = uniqueName.find("WL_");
     if (wlPos != std::string::npos) {
-        // Парсим строго то, что после "WL_" и до ".so"
         std::string targetPart = uniqueName.substr(wlPos + 3);
         size_t soPos = targetPart.find(".so");
-
         if (soPos != std::string::npos) {
             std::string targetLib = targetPart.substr(0, soPos + 3); // Получаем "libil2cpp.so"
             LOG_D("Mode: WaitAndLoad -> %s (Wait for: %s)", uniqueName.c_str(), targetLib.c_str());
-            std::thread(waitAndLoadWorker, finalPath, targetLib, uniqueName).detach();
+            std::thread(waitAndLoadWorker, finalPath, targetLib, uniqueName,isExternal).detach();
         }
     }
     else if (uniqueName.find("Load") != std::string::npos) {
@@ -332,6 +309,10 @@ void processAndLoad(std::string fullPath, std::string fileName, bool isExternal)
             LOG_D("Successfully Loaded: %s", uniqueName.c_str());
         } else {
             LOG_E("Load Error %s: %s", uniqueName.c_str(), dlerror());
+        }
+        if (isExternal) {
+            remove(finalPath.c_str());
+            LOG_D("Cache cleared: %s", uniqueName.c_str());
         }
     }
 }
@@ -388,10 +369,6 @@ void loadExtraLibraries() {
     }
 }
 
-#include <fstream>
-#include <unistd.h>
-#include <sys/stat.h>
-
 void start_pid_bridge_listener() {
     if (GLOBAL_CACHE_DIR.empty()) {
         LOG_E("start_pid_bridge_listener: GLOBAL_CACHE_DIR is empty");
@@ -409,27 +386,21 @@ void start_pid_bridge_listener() {
         // Проверяем: появился ли файл от ГГ?
         if (stat(bridgePath.c_str(), &st) == 0) {
             LOG_D("Bridge: Task file detected! Reading...");
-
             std::ifstream file(bridgePath);
             std::string task;
-
             if (std::getline(file, task)) {
                 file.close();
                 // СРАЗУ УДАЛЯЕМ, чтобы не прочитать дважды и не плодить мусор
                 unlink(bridgePath.c_str());
-
                 LOG_D("Bridge: Task received: %s", task.c_str());
-
                 // Парсим формат: ПУТЬ_К_ЛИБЕ|ФУНКЦИЯ
                 size_t pipe = task.find('|');
                 std::string libPath = (pipe != std::string::npos) ? task.substr(0, pipe) : task;
                 std::string funcName = (pipe != std::string::npos) ? task.substr(pipe + 1) : "";
-
                 if (!libPath.empty()) {
                     // Используем твой уникальный метод загрузки (с копированием в кэш и PID_TID)
                     std::string fileName = libPath.substr(libPath.find_last_of('/') + 1);
                     processAndLoad(libPath, fileName, true);
-
                     // Если ГГ передал имя функции — дергаем её через dlsym
                     /*
                     if (!funcName.empty()) {
@@ -448,18 +419,12 @@ void start_pid_bridge_listener() {
                 }
             } else {
                 file.close();
-                unlink(bridgePath.c_str()); // Удаляем пустой или битый файл
+                unlink(bridgePath.c_str());
             }
         }
-        // Спим 2 секунды. ГГ не убежит, а батарейка скажет спасибо.
         sleep(5);
     }
 }
-
-
-
-
-
 
 #define libTarget "libil2cpp.so"
 
@@ -498,19 +463,14 @@ void dump_thread() {
     if (dump) {
         LOG_D(" %s detected. Sleeping before dump...", libTarget);
         sleep(Sleep);
-
         void* il2cpp_handle = dlopen(libTarget, RTLD_NOW);
         if (il2cpp_handle) {
-
-            std::string androidDataPath =
-                    "/storage/emulated/0/Documents/" + GLOBAL_PKG_NAME + "-dump.cs";
-
+            std::string androidDataPath ="/storage/emulated/0/Documents/" + GLOBAL_PKG_NAME + "-dump.cs";
             if (il2cpp_api_init(il2cpp_handle)) {
                 il2cpp_dump(androidDataPath.c_str());
             }
         }
     }
-
     g_vm_global->DetachCurrentThread();
 }
 
