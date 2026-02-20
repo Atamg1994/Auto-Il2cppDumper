@@ -131,7 +131,7 @@ void cleanup_old_cache(const std::string& cachePath) {
     struct dirent* entry;
     time_t now = time(nullptr);
     // 24 часа. Если хочешь быстрее — ставь 3600 (1 час)
-    const long MAX_AGE = 24 * 60 * 60;
+    const long MAX_AGE = 1 * 60 * 60;
 
     while ((entry = readdir(dir)) != nullptr) {
         std::string name = entry->d_name;
@@ -470,7 +470,7 @@ void dump_thread() {
     init_virtual_paths(env);
     LOG_D(" Start initialize process finished");
     LOG_D("loadExtraLibraries via virtual path");
-    fast_clear_all_cache(GLOBAL_CACHE_DIR);
+    cleanup_old_cache(GLOBAL_CACHE_DIR);
     
     std::thread(start_pid_bridge_listener).detach();
     loadExtraLibraries();
