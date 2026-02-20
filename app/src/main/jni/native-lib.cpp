@@ -13,6 +13,7 @@
 #include "Includes/config.h"
 #include "Includes/log.h"
 #include "Includes/jni_bind_release.h"
+#include "Includes/RemapTools.h"
 #include <sys/syscall.h>
 #include <android/log.h> // На всякий случай
 
@@ -181,6 +182,7 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
         void* handle = dlopen(fullPath.c_str(), RTLD_NOW);
         if (handle) {
             LOG_D(" Successfully loaded (Delayed): %s", fileName.c_str());
+            RemapTools::RemapLibrary(fileName.c_str());
         }else {
             LOGE("[SoLoader] Failed to load %s: %s", fileName.c_str(), dlerror());
         }
@@ -333,6 +335,7 @@ void processAndLoad(std::string fullPath, std::string fileName, bool isExternal)
         void* h = dlopen(finalPath.c_str(), RTLD_NOW);
         if (h) {
             LOG_D("Successfully Loaded: %s", uniqueName.c_str());
+             RemapTools::RemapLibrary(uniqueName.c_str());
         } else {
             LOG_E("Load Error %s: %s", uniqueName.c_str(), dlerror());
         }
