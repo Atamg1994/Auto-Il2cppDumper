@@ -205,7 +205,7 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
     }
     if(load){
         LOG_D(" Target %s detected! Loading %s now...", targetLib.c_str(), fileName.c_str());
-        LoadAndCleanupLibrary(finalPath, fileName, isExternal);
+        LoadAndCleanupLibrary(fullPath, fileName, isExternal);
     }
 }
 
