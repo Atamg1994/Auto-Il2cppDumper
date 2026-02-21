@@ -292,7 +292,7 @@ void LoadAndCleanupLibrary(const std::string& currentPath, const std::string& fi
     if (isExternal) {
         ready = (rename(currentPath.c_str(), targetPath.c_str()) == 0);
     } else {
-        ready = copyFile(currentPath, targetPath);
+        ready = true;
     }
 
     if (ready) {
@@ -311,11 +311,12 @@ void LoadAndCleanupLibrary(const std::string& currentPath, const std::string& fi
         } else {
             LOG_E("Load Error: %s", dlerror());
         }
-
+        if (isExternal) {
         // 3. Чистка
         sleep(1);
         remove(targetPath.c_str());
         LOG_D("File removed: %s", targetPath.c_str());
+        }
     }
 }
 
