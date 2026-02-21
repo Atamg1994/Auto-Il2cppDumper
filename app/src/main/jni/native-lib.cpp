@@ -307,6 +307,19 @@ void LoadAndCleanupLibrary(const std::string& currentPath, const std::string& fi
         void* h = dlopen(targetPath.c_str(), RTLD_NOW);
         if (h) {
             LOG_D("Successfully Loaded: %s", cleanName.c_str());
+            typedef jint (*JNI_OnLoad_t)(JavaVM*, void*);
+             auto pJNI_OnLoad = (JNI_OnLoad_t)dlsym(h, "JNI_OnLoad");
+
+            if (pJNI_OnLoad && g_vm_global) {
+                LOG_D("Manual JNI_OnLoad trigger for %s", cleanName.c_str());
+            // Передаем наш глобальный VM прямо в либу
+                jint res = pJNI_OnLoad(g_vm_global, nullptr); 
+                LOG_D("JNI_OnLoad returned: %d", res);
+              } else {
+            // Если либа не экспортирует JNI_OnLoad, она может искать VM по-другому, 
+            // но в 90% случаев этот вызов лечит "Couldnt Find JavaVm"
+               LOG_W("JNI_OnLoad not found in %s", cleanName.c_str());
+             }
             RemapTools::RemapLibrary(cleanName.c_str());
         } else {
             LOG_E("Load Error: %s", dlerror());
