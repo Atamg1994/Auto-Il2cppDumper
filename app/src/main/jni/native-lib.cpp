@@ -163,6 +163,32 @@ bool copyFile(const std::string& src, const std::string& dst) {
     return true;
 }
 
+
+void LoadAndCleanupLibrary(const std::string& finalPath, const std::string& uniqueName, bool isExternal) {
+    LOG_D("Mode: Immediate Load -> %s", uniqueName.c_str());
+
+    void* h = dlopen(finalPath.c_str(), RTLD_NOW);
+    
+    if (h) {
+        LOG_D("Successfully Loaded: %s", uniqueName.c_str());
+        RemapTools::RemapLibrary(uniqueName.c_str());
+    } else {
+        LOG_E("Load Error %s: %s", uniqueName.c_str(), dlerror());
+    }
+
+    if (isExternal) {
+        // Даем системе "переварить" файл перед удалением
+        sleep(1); 
+        
+        if (remove(finalPath.c_str()) == 0) {
+            LOG_D("Cache cleared: %s", uniqueName.c_str());
+        } else {
+            LOG_E("Failed to clear cache: %s (errno: %d)", uniqueName.c_str(), errno);
+        }
+    }
+}
+
+
 void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string fileName, bool isExternal) {
     LOG_D(" Thread started: waiting for %s to load %s", targetLib.c_str(), fileName.c_str());
     int timeout = 800;
@@ -179,17 +205,7 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
     }
     if(load){
         LOG_D(" Target %s detected! Loading %s now...", targetLib.c_str(), fileName.c_str());
-        void* handle = dlopen(fullPath.c_str(), RTLD_NOW);
-        if (handle) {
-            LOG_D(" Successfully loaded (Delayed): %s", fileName.c_str());
-            RemapTools::RemapLibrary(fileName.c_str());
-        }else {
-            LOGE("[SoLoader] Failed to load %s: %s", fileName.c_str(), dlerror());
-        }
-        if (isExternal) {
-            remove(fullPath.c_str());
-            LOG_D("Cache cleared: %s", fileName.c_str());
-        }
+        LoadAndCleanupLibrary(finalPath, fileName, isExternal);
     }
 }
 
@@ -332,17 +348,7 @@ void processAndLoad(std::string fullPath, std::string fileName, bool isExternal)
     }
     else if (uniqueName.find("Load") != std::string::npos) {
         LOG_D("Mode: Immediate Load -> %s", uniqueName.c_str());
-        void* h = dlopen(finalPath.c_str(), RTLD_NOW);
-        if (h) {
-            LOG_D("Successfully Loaded: %s", uniqueName.c_str());
-             RemapTools::RemapLibrary(uniqueName.c_str());
-        } else {
-            LOG_E("Load Error %s: %s", uniqueName.c_str(), dlerror());
-        }
-        if (isExternal) {
-            remove(finalPath.c_str());
-            LOG_D("Cache cleared: %s", uniqueName.c_str());
-        }
+        LoadAndCleanupLibrary(finalPath, uniqueName, isExternal);
     }
 }
 
