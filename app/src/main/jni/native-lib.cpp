@@ -308,7 +308,7 @@ void LoadAndCleanupLibrary(const std::string& currentPath, const std::string& fi
             //remove(targetPath.c_str()); не трогаем конфиги их удалит система со временем!
             return;
         }
-        
+
         // 2. Загрузка библиотеки
         void* h = dlopen(targetPath.c_str(), RTLD_NOW);
         if (h) {
@@ -347,16 +347,22 @@ void LoadAndCleanupLibrary(const std::string& currentPath, const std::string& fi
 
 
 
-            RemapTools::RemapLibrary(cleanName.c_str());
+            //RemapTools::RemapLibrary(cleanName.c_str());
         } else {
             LOG_E("Load Error: %s", dlerror());
         }
-        
+
         if (isExternal) {
             // 3. Чистка
-            sleep(1);
-            remove(targetPath.c_str());
-            LOG_D("File removed: %s", targetPath.c_str());
+            // Создаем отдельный поток специально для удаления
+            std::thread([targetPath, cleanName]() {
+                sleep(10); // Ждем достаточно долго
+                if (remove(targetPath.c_str()) == 0) {
+                    LOG_D("Delayed cleanup SUCCESS: %s", cleanName.c_str());
+                } else {
+                    LOG_E("Delayed cleanup FAILED: %s (errno: %d)", cleanName.c_str(), errno);
+                }
+            }).detach(); // Отсоединяем, чтобы он жил сам по себе
         }
     }
 }
