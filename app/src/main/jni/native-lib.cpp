@@ -180,7 +180,7 @@ std::string find_my_config_path() {
             while ((entry = readdir(dir)) != nullptr) {
                 std::string fname = entry->d_name;
 									   
-                if (fname.fnd(base_name + ".unityconfig") == 0) {
+                if (fname.find(base_name + ".unityconfig") == 0) {
                     std::string res = lib_dir + "/" + fname;
                     closedir(dir);
 																												
@@ -203,7 +203,7 @@ void disable_fdsan() {
             set_error_level(ANDROID_FDSAN_ERROR_LEVEL_DISABLED);
             LOGI("SNITY: fdsan DISABLED to bypass PairIP conflict");
         }
-        dlclose(lib);
+        closedir(lib);
     }
 }
 // --- ТВОЙ ОРИГИНАЛЬНЫЙ КОД БЕЗ ИЗМЕНЕНИЙ ---
