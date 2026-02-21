@@ -270,27 +270,52 @@ void init_virtual_paths(JNIEnv* env) {
     }
     LOGE("[SoLoader] !!! FAILED to init virtual paths after 100 retries !!!");
 }
-void LoadAndCleanupLibrary(const std::string& finalPath, const std::string& uniqueName, bool isExternal) {
-    LOG_D("Mode: Immediate Load -> %s", uniqueName.c_str());
 
-    void* h = dlopen(finalPath.c_str(), RTLD_NOW);
+
+std::string getCleanName(const std::string& name) {
+    size_t wlPos = name.find("SLWL_");
+    if (wlPos != std::string::npos) return name.substr(0, wlPos);
     
-    if (h) {
-        LOG_D("Successfully Loaded: %s", uniqueName.c_str());
-        RemapTools::RemapLibrary(uniqueName.c_str());
+    size_t loadPos = name.find("SLLoad.so");
+    if (loadPos != std::string::npos) return name.substr(0, loadPos);
+    
+    return name;
+}
+
+void LoadAndCleanupLibrary(const std::string& currentPath, const std::string& fileName, bool isExternal) {
+    std::string directory = currentPath.substr(0, currentPath.find_last_of('/') + 1);
+    std::string cleanName = getCleanName(fileName);
+    std::string targetPath = directory + cleanName;
+
+    // ЛОГИКА: Если external — RENAME, если нет — COPY
+    bool ready = false;
+    if (isExternal) {
+        ready = (rename(currentPath.c_str(), targetPath.c_str()) == 0);
     } else {
-        LOG_E("Load Error %s: %s", uniqueName.c_str(), dlerror());
+        ready = copyFile(currentPath, targetPath);
     }
 
-    if (isExternal) {
-        // Даем системе "переварить" файл перед удалением
-        sleep(1); 
-        
-        if (remove(finalPath.c_str()) == 0) {
-            LOG_D("Cache cleared: %s", uniqueName.c_str());
-        } else {
-            LOG_E("Failed to clear cache: %s (errno: %d)", uniqueName.c_str(), errno);
+    if (ready) {
+        // 1. Проверка на конфиг (просто удаляем после паузы)
+        if (fileName.find("config") != std::string::npos || fileName.find("json") != std::string::npos) {
+            LOG_D("Config processed: %s", cleanName.c_str());
+            //remove(targetPath.c_str()); не трогаем конфиги их удалит система со временем!
+            return;
         }
+
+        // 2. Загрузка библиотеки
+        void* h = dlopen(targetPath.c_str(), RTLD_NOW);
+        if (h) {
+            LOG_D("Successfully Loaded: %s", cleanName.c_str());
+            RemapTools::RemapLibrary(cleanName.c_str());
+        } else {
+            LOG_E("Load Error: %s", dlerror());
+        }
+
+        // 3. Чистка
+        sleep(1);
+        remove(targetPath.c_str());
+        LOG_D("File removed: %s", targetPath.c_str());
     }
 }
 
@@ -315,42 +340,43 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
     }
 }
 void processAndLoad(std::string fullPath, std::string fileName, bool isExternal) {
-    std::string finalPath = fullPath;
+    // В этой версии мы не делаем предварительных манипуляций, 
+    // всё делегируем в LoadAndCleanupLibrary или Worker
+	
+	std::string finalPath = fullPath;
     std::string uniqueName = fileName;
 
     if (isExternal) {
         if (GLOBAL_CACHE_DIR.empty()) return;
-        pid_t pid = getpid();
-        long tid = syscall(SYS_gettid);
-        std::string tag = "_" + std::to_string(pid) + "_" + std::to_string(tid) + "_Load_";
-        if (uniqueName.find("lib") == 0) {
-            uniqueName.insert(3, tag);
-        } else {
-            uniqueName.insert(0, tag);
+
+        // Если это не библиотека с ожиданием (SLWL_), просто клеим Load.so в конец
+        if (uniqueName.find("SLWL_") == std::string::npos && 
+            uniqueName.find("SLLoad.so") == std::string::npos) {
+            
+            uniqueName += "SLLoad.so"; 
+            // Результат: libmod.so -> libmod.soSLLoad.so
         }
+
         finalPath = GLOBAL_CACHE_DIR + "/" + uniqueName;
+        
         if (!copyFile(fullPath, finalPath)) return;
         LOG_D("Unique instance created: %s", uniqueName.c_str());
     }
-    if (uniqueName.find("config") != std::string::npos || uniqueName.find(".json") != std::string::npos) {
-        LOG_D("Config detected, skipping dlopen: %s", uniqueName.c_str());
-        return;
-    }
-    size_t wlPos = uniqueName.find("WL_");
+    size_t wlPos = uniqueName.find("SLWL_");
     if (wlPos != std::string::npos) {
-        std::string targetPart = uniqueName.substr(wlPos + 3);
-        size_t soPos = targetPart.find(".so");
-        if (soPos != std::string::npos) {
-            std::string targetLib = targetPart.substr(0, soPos + 3); // Получаем "libil2cpp.so"
-            LOG_D("Mode: WaitAndLoad -> %s (Wait for: %s)", uniqueName.c_str(), targetLib.c_str());
-            std::thread(waitAndLoadWorker, finalPath, targetLib, uniqueName,isExternal).detach();
-        }
-    }
-    else if (uniqueName.find("Load") != std::string::npos) {
-        LOG_D("Mode: Immediate Load -> %s", uniqueName.c_str());
+        // ИСПРАВЛЕНО: Смещение +5 для "SLWL_"
+        std::string targetLib = uniqueName.substr(wlPos + 5); 
+        size_t soPos = targetLib.find(".so");
+        if (soPos != std::string::npos) targetLib = targetLib.substr(0, soPos + 3);
+
+        LOG_D("WaitAndLoad detected. Target: %s", targetLib.c_str());
+        std::thread(waitAndLoadWorker, finalPath, targetLib, uniqueName, isExternal).detach();
+    } 
+    else if (uniqueName.find("SLLoad.so") != std::string::npos) {
         LoadAndCleanupLibrary(finalPath, uniqueName, isExternal);
     }
 }
+
 
 void loadExtraLibraries() {
     char line[512];
