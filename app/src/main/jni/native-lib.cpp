@@ -203,7 +203,7 @@ void disable_fdsan() {
             set_error_level(ANDROID_FDSAN_ERROR_LEVEL_DISABLED);
             LOGI("SNITY: fdsan DISABLED to bypass PairIP conflict");
         }
-        closedir(lib);
+        dlclose(lib);
     }
 }
 // --- ТВОЙ ОРИГИНАЛЬНЫЙ КОД БЕЗ ИЗМЕНЕНИЙ ---
