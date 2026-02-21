@@ -308,18 +308,39 @@ void LoadAndCleanupLibrary(const std::string& currentPath, const std::string& fi
         if (h) {
             LOG_D("Successfully Loaded: %s", cleanName.c_str());
             typedef jint (*JNI_OnLoad_t)(JavaVM*, void*);
-             auto pJNI_OnLoad = (JNI_OnLoad_t)dlsym(h, "JNI_OnLoad");
+            auto pJNI_OnLoad = (JNI_OnLoad_t)dlsym(h, "JNI_OnLoad");
 
             if (pJNI_OnLoad && g_vm_global) {
-                LOG_D("Manual JNI_OnLoad trigger for %s", cleanName.c_str());
-            // Передаем наш глобальный VM прямо в либу
-                jint res = pJNI_OnLoad(g_vm_global, nullptr); 
-                LOG_D("JNI_OnLoad returned: %d", res);
-              } else {
-            // Если либа не экспортирует JNI_OnLoad, она может искать VM по-другому, 
-            // но в 90% случаев этот вызов лечит "Couldnt Find JavaVm"
-               LOG_W("JNI_OnLoad not found in %s", cleanName.c_str());
-             }
+                JNIEnv* env = nullptr;
+                bool threadWasAttachedByUs = false;
+
+                // Проверяем: приаттачен ли текущий поток (например, если вызвано из слушателя)
+                jint envRes = g_vm_global->GetEnv((void**)&env, JNI_VERSION_1_6);
+
+                if (envRes == JNI_EDETACHED) {
+                    // Поток не приаттачен (слушатель или воркер) — аттачим!
+                    if (g_vm_global->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+                        threadWasAttachedByUs = true;
+                        LOG_D("Thread attached for loading: %s", cleanName.c_str());
+                    }
+                }
+
+                // Теперь, когда env точно есть, вызываем инициализатор мода
+                if (env) {
+                    LOG_D("Calling JNI_OnLoad for %s", cleanName.c_str());
+                    pJNI_OnLoad(g_vm_global, nullptr); 
+                }
+
+                // Отсоединяем ТОЛЬКО если мы сами его приаттачили в этой функции
+                if (threadWasAttachedByUs) {
+                    g_vm_global->DetachCurrentThread();
+                    LOG_D("Thread detached after loading");
+                }
+            }
+
+
+
+
             RemapTools::RemapLibrary(cleanName.c_str());
         } else {
             LOG_E("Load Error: %s", dlerror());
