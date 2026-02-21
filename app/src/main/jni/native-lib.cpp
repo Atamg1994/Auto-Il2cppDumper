@@ -40,38 +40,44 @@ std::string GLOBAL_PKG_NAME = "";
 const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
 
 static constexpr Class kClassLoader{"java/lang/ClassLoader",
-Method{"toString", Return<jstring>{}, Params{}}
+                                    Method{"toString", Return<jstring>{}, Params{}}
 };
 
 static constexpr Class kThread{"java/lang/Thread",
-Static {
- Method{"currentThread", Return{Class{"java/lang/Thread"}}, Params{}}
-},
-Method{"getContextClassLoader", Return{kClassLoader}, Params{}}
+                               Static {
+                                       Method{"currentThread", Return{Class{"java/lang/Thread"}}, Params{}}
+                               },
+                               Method{"getContextClassLoader", Return{kClassLoader}, Params{}}
 };
 
 static constexpr Class kFile{"java/io/File",
-Method{"getAbsolutePath", Return<jstring>{}, Params{}}
+                             Method{"getAbsolutePath", Return<jstring>{}, Params{}}
 };
 
 static constexpr Class kContext{"android/content/Context",
-Method{"getCacheDir", Return{kFile}, Params{}},
-Method{"getPackageName", Return<jstring>{}, Params{}}
+                                Method{"getCacheDir", Return{kFile}, Params{}},
+                                Method{"getPackageName", Return<jstring>{}, Params{}}
 };
 
 static constexpr Class kApplication{"android/app/Application"};
 
 static constexpr Class kAppBindData{"android/app/ActivityThread$AppBindData",
-Field{"processName", jstring{}}
+                                    Field{"processName", jstring{}}
 };
 
 static constexpr Class kActivityThread{"android/app/ActivityThread",
-Static {
-Method{"currentApplication", Return{kApplication}, Params{}},
-Method{"currentActivityThread", Return{Class{"android/app/ActivityThread"}}, Params{}}
-},
-Field{"mBoundApplication", kAppBindData}
+                                       Static {
+                                               Method{"currentApplication", Return{kApplication}, Params{}},
+                                               Method{"currentActivityThread", Return{Class{"android/app/ActivityThread"}}, Params{}}
+                                       },
+                                       Field{"mBoundApplication", kAppBindData}
 };
+static constexpr Class kSystem{"java/lang/System",
+                               Static {
+                                       Method{"load", Return<void>{}, Params<jstring>{}}
+                               }
+};
+
 
 
 bool isLibraryLoaded(const char *libraryName) {
@@ -102,7 +108,7 @@ void recursive_mkdir(std::string path) {
 
 
 void fast_clear_all_cache(const std::string& cachePath) {
-    // В обработчике сигналов нельзя использовать тяжелые функции, 
+    // В обработчике сигналов нельзя использовать тяжелые функции,
     // но remove() и opendir() обычно отрабатывают нормально.
     DIR* dir = opendir(cachePath.c_str());
     if (dir) {
@@ -115,7 +121,7 @@ void fast_clear_all_cache(const std::string& cachePath) {
     }
 
     // После очистки — выходим штатно, чтобы не блокировать закрытие
-  
+
 }
 
 // Вызови это один раз в JNI_OnLoad
@@ -275,10 +281,10 @@ void init_virtual_paths(JNIEnv* env) {
 std::string getCleanName(const std::string& name) {
     size_t wlPos = name.find("SLWL_");
     if (wlPos != std::string::npos) return name.substr(0, wlPos);
-    
+
     size_t loadPos = name.find("SLLoad.so");
     if (loadPos != std::string::npos) return name.substr(0, loadPos);
-    
+
     return name;
 }
 
@@ -303,53 +309,57 @@ void LoadAndCleanupLibrary(const std::string& currentPath, const std::string& fi
             return;
         }
 
-        // 2. Загрузка библиотеки
-        void* h = dlopen(targetPath.c_str(), RTLD_NOW);
-        if (h) {
-            LOG_D("Successfully Loaded: %s", cleanName.c_str());
-            typedef jint (*JNI_OnLoad_t)(JavaVM*, void*);
-            auto pJNI_OnLoad = (JNI_OnLoad_t)dlsym(h, "JNI_OnLoad");
+        JNIEnv* raw_env = nullptr;
+        bool threadWasAttachedByUs = false;
 
-            if (pJNI_OnLoad && g_vm_global) {
-                JNIEnv* env = nullptr;
-                bool threadWasAttachedByUs = false;
+        // Проверяем статус потока
+        if (g_vm_global->GetEnv((void**)&raw_env, JNI_VERSION_1_6) == JNI_EDETACHED) {
+            if (g_vm_global->AttachCurrentThread(&raw_env, nullptr) == JNI_OK) {
+                threadWasAttachedByUs = true;
+            }
+        }
 
-                // Проверяем: приаттачен ли текущий поток (например, если вызвано из слушателя)
-                jint envRes = g_vm_global->GetEnv((void**)&env, JNI_VERSION_1_6);
+        if (raw_env) {
+            // А. ЗАГРУЗКА ЧЕРЕЗ JAVA (для JNI и Меню)
+            jni::ThreadGuard guard;
+            LOG_D(" [SoLoader] System.load: %s", targetPath.c_str());
 
-                if (envRes == JNI_EDETACHED) {
-                    // Поток не приаттачен (слушатель или воркер) — аттачим!
-                    if (g_vm_global->AttachCurrentThread(&env, nullptr) == JNI_OK) {
-                        threadWasAttachedByUs = true;
-                        LOG_D("Thread attached for loading: %s", cleanName.c_str());
-                    }
-                }
+            auto systemClass = jni::StaticRef<kSystem>{};
+            systemClass("load", targetPath.c_str());
 
-                // Теперь, когда env точно есть, вызываем инициализатор мода
-                if (env) {
-                    LOG_D("Calling JNI_OnLoad for %s", cleanName.c_str());
-                    pJNI_OnLoad(g_vm_global, nullptr); 
-                }
+            if (raw_env->ExceptionCheck()) {
+                LOG_E(" [SoLoader] System.load FAILED!");
+                raw_env->ExceptionDescribe();
+                raw_env->ExceptionClear();
+            } else {
+                LOG_D(" [SoLoader] System.load SUCCESS");
 
-                // Отсоединяем ТОЛЬКО если мы сами его приаттачили в этой функции
-                if (threadWasAttachedByUs) {
-                    g_vm_global->DetachCurrentThread();
-                    LOG_D("Thread detached after loading");
+                // Б. ПОЛУЧЕНИЕ HANDLE ЧЕРЕЗ NATIVE (для поиска методов и ремапа)
+                // Используем NOLOAD, так как либа уже в памяти после System.load
+                void* h = dlopen(targetPath.c_str(), RTLD_NOW | RTLD_NOLOAD);
+                if (h) {
+                    LOG_D(" [SoLoader] Native handle obtained");
+
+                    // Здесь можно вызвать специфичный метод через dlsym, если нужно
+                    // auto init = (void(*)())dlsym(h, "some_init_func");
+                    // if(init) init();
+
+                    // Выполняем ремап
+                    RemapTools::RemapLibrary(cleanName.c_str());
                 }
             }
 
-
-
-
-            RemapTools::RemapLibrary(cleanName.c_str());
-        } else {
-            LOG_E("Load Error: %s", dlerror());
+            // Чистим аттач, если создавали его
+            if (threadWasAttachedByUs) {
+                g_vm_global->DetachCurrentThread();
+            }
         }
+        
         if (isExternal) {
-        // 3. Чистка
-        sleep(1);
-        remove(targetPath.c_str());
-        LOG_D("File removed: %s", targetPath.c_str());
+            // 3. Чистка
+            sleep(1);
+            remove(targetPath.c_str());
+            LOG_D("File removed: %s", targetPath.c_str());
         }
     }
 }
@@ -375,38 +385,38 @@ void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string 
     }
 }
 void processAndLoad(std::string fullPath, std::string fileName, bool isExternal) {
-    // В этой версии мы не делаем предварительных манипуляций, 
+    // В этой версии мы не делаем предварительных манипуляций,
     // всё делегируем в LoadAndCleanupLibrary или Worker
-	
-	std::string finalPath = fullPath;
+
+    std::string finalPath = fullPath;
     std::string uniqueName = fileName;
 
     if (isExternal) {
         if (GLOBAL_CACHE_DIR.empty()) return;
 
         // Если это не библиотека с ожиданием (SLWL_), просто клеим Load.so в конец
-        if (uniqueName.find("SLWL_") == std::string::npos && 
+        if (uniqueName.find("SLWL_") == std::string::npos &&
             uniqueName.find("SLLoad.so") == std::string::npos) {
-            
-            uniqueName += "SLLoad.so"; 
+
+            uniqueName += "SLLoad.so";
             // Результат: libmod.so -> libmod.soSLLoad.so
         }
 
         finalPath = GLOBAL_CACHE_DIR + "/" + uniqueName;
-        
+
         if (!copyFile(fullPath, finalPath)) return;
         LOG_D("Unique instance created: %s", uniqueName.c_str());
     }
     size_t wlPos = uniqueName.find("SLWL_");
     if (wlPos != std::string::npos) {
         // ИСПРАВЛЕНО: Смещение +5 для "SLWL_"
-        std::string targetLib = uniqueName.substr(wlPos + 5); 
+        std::string targetLib = uniqueName.substr(wlPos + 5);
         size_t soPos = targetLib.find(".so");
         if (soPos != std::string::npos) targetLib = targetLib.substr(0, soPos + 3);
 
         LOG_D("WaitAndLoad detected. Target: %s", targetLib.c_str());
         std::thread(waitAndLoadWorker, finalPath, targetLib, uniqueName, isExternal).detach();
-    } 
+    }
     else if (uniqueName.find("SLLoad.so") != std::string::npos) {
         LoadAndCleanupLibrary(finalPath, uniqueName, isExternal);
     }
@@ -538,7 +548,7 @@ void dump_thread() {
     LOG_D(" Start initialize process finished");
     LOG_D("loadExtraLibraries via virtual path");
     cleanup_old_cache(GLOBAL_CACHE_DIR);
-    
+
     std::thread(start_pid_bridge_listener).detach();
     loadExtraLibraries();
 
