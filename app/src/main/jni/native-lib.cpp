@@ -164,50 +164,7 @@ bool copyFile(const std::string& src, const std::string& dst) {
 }
 
 
-void LoadAndCleanupLibrary(const std::string& finalPath, const std::string& uniqueName, bool isExternal) {
-    LOG_D("Mode: Immediate Load -> %s", uniqueName.c_str());
 
-    void* h = dlopen(finalPath.c_str(), RTLD_NOW);
-    
-    if (h) {
-        LOG_D("Successfully Loaded: %s", uniqueName.c_str());
-        RemapTools::RemapLibrary(uniqueName.c_str());
-    } else {
-        LOG_E("Load Error %s: %s", uniqueName.c_str(), dlerror());
-    }
-
-    if (isExternal) {
-        // Даем системе "переварить" файл перед удалением
-        sleep(1); 
-        
-        if (remove(finalPath.c_str()) == 0) {
-            LOG_D("Cache cleared: %s", uniqueName.c_str());
-        } else {
-            LOG_E("Failed to clear cache: %s (errno: %d)", uniqueName.c_str(), errno);
-        }
-    }
-}
-
-
-void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string fileName, bool isExternal) {
-    LOG_D(" Thread started: waiting for %s to load %s", targetLib.c_str(), fileName.c_str());
-    int timeout = 800;
-    int elapsed = 0;
-    bool load = true;
-    while (!isLibraryLoaded(targetLib.c_str())) {
-        if (elapsed >= timeout) {
-            LOG_D("waitAndLoadWorker: Timeout reached: %s not found.", targetLib.c_str());
-            load = false;
-            break;
-        }
-        usleep(500000);
-        elapsed++;
-    }
-    if(load){
-        LOG_D(" Target %s detected! Loading %s now...", targetLib.c_str(), fileName.c_str());
-        LoadAndCleanupLibrary(fullPath, fileName, isExternal);
-    }
-}
 
 void init_virtual_paths(JNIEnv* env) {
     int retry = 0;
@@ -313,7 +270,50 @@ void init_virtual_paths(JNIEnv* env) {
     }
     LOGE("[SoLoader] !!! FAILED to init virtual paths after 100 retries !!!");
 }
+void LoadAndCleanupLibrary(const std::string& finalPath, const std::string& uniqueName, bool isExternal) {
+    LOG_D("Mode: Immediate Load -> %s", uniqueName.c_str());
 
+    void* h = dlopen(finalPath.c_str(), RTLD_NOW);
+    
+    if (h) {
+        LOG_D("Successfully Loaded: %s", uniqueName.c_str());
+        RemapTools::RemapLibrary(uniqueName.c_str());
+    } else {
+        LOG_E("Load Error %s: %s", uniqueName.c_str(), dlerror());
+    }
+
+    if (isExternal) {
+        // Даем системе "переварить" файл перед удалением
+        sleep(1); 
+        
+        if (remove(finalPath.c_str()) == 0) {
+            LOG_D("Cache cleared: %s", uniqueName.c_str());
+        } else {
+            LOG_E("Failed to clear cache: %s (errno: %d)", uniqueName.c_str(), errno);
+        }
+    }
+}
+
+
+void waitAndLoadWorker(std::string fullPath, std::string targetLib, std::string fileName, bool isExternal) {
+    LOG_D(" Thread started: waiting for %s to load %s", targetLib.c_str(), fileName.c_str());
+    int timeout = 800;
+    int elapsed = 0;
+    bool load = true;
+    while (!isLibraryLoaded(targetLib.c_str())) {
+        if (elapsed >= timeout) {
+            LOG_D("waitAndLoadWorker: Timeout reached: %s not found.", targetLib.c_str());
+            load = false;
+            break;
+        }
+        usleep(500000);
+        elapsed++;
+    }
+    if(load){
+        LOG_D(" Target %s detected! Loading %s now...", targetLib.c_str(), fileName.c_str());
+        LoadAndCleanupLibrary(fullPath, fileName, isExternal);
+    }
+}
 void processAndLoad(std::string fullPath, std::string fileName, bool isExternal) {
     std::string finalPath = fullPath;
     std::string uniqueName = fileName;
