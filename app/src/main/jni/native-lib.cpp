@@ -308,51 +308,48 @@ void LoadAndCleanupLibrary(const std::string& currentPath, const std::string& fi
             //remove(targetPath.c_str()); не трогаем конфиги их удалит система со временем!
             return;
         }
+        
+        // 2. Загрузка библиотеки
+        void* h = dlopen(targetPath.c_str(), RTLD_NOW);
+        if (h) {
+            LOG_D("Successfully Loaded: %s", cleanName.c_str());
+            typedef jint (*JNI_OnLoad_t)(JavaVM*, void*);
+            auto pJNI_OnLoad = (JNI_OnLoad_t)dlsym(h, "JNI_OnLoad");
 
-        JNIEnv* raw_env = nullptr;
-        bool threadWasAttachedByUs = false;
+            if (pJNI_OnLoad && g_vm_global) {
+                JNIEnv* env = nullptr;
+                bool threadWasAttachedByUs = false;
 
-        // Проверяем статус потока
-        if (g_vm_global->GetEnv((void**)&raw_env, JNI_VERSION_1_6) == JNI_EDETACHED) {
-            if (g_vm_global->AttachCurrentThread(&raw_env, nullptr) == JNI_OK) {
-                threadWasAttachedByUs = true;
-            }
-        }
+                // Проверяем: приаттачен ли текущий поток (например, если вызвано из слушателя)
+                jint envRes = g_vm_global->GetEnv((void**)&env, JNI_VERSION_1_6);
 
-        if (raw_env) {
-            // А. ЗАГРУЗКА ЧЕРЕЗ JAVA (для JNI и Меню)
-            jni::ThreadGuard guard;
-            LOG_D(" [SoLoader] System.load: %s", targetPath.c_str());
+                if (envRes == JNI_EDETACHED) {
+                    // Поток не приаттачен (слушатель или воркер) — аттачим!
+                    if (g_vm_global->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+                        threadWasAttachedByUs = true;
+                        LOG_D("Thread attached for loading: %s", cleanName.c_str());
+                    }
+                }
 
-            auto systemClass = jni::StaticRef<kSystem>{};
-            systemClass("load", targetPath.c_str());
+                // Теперь, когда env точно есть, вызываем инициализатор мода
+                if (env) {
+                    LOG_D("Calling JNI_OnLoad for %s", cleanName.c_str());
+                    pJNI_OnLoad(g_vm_global, nullptr);
+                }
 
-            if (raw_env->ExceptionCheck()) {
-                LOG_E(" [SoLoader] System.load FAILED!");
-                raw_env->ExceptionDescribe();
-                raw_env->ExceptionClear();
-            } else {
-                LOG_D(" [SoLoader] System.load SUCCESS");
-
-                // Б. ПОЛУЧЕНИЕ HANDLE ЧЕРЕЗ NATIVE (для поиска методов и ремапа)
-                // Используем NOLOAD, так как либа уже в памяти после System.load
-                void* h = dlopen(targetPath.c_str(), RTLD_NOW | RTLD_NOLOAD);
-                if (h) {
-                    LOG_D(" [SoLoader] Native handle obtained");
-
-                    // Здесь можно вызвать специфичный метод через dlsym, если нужно
-                    // auto init = (void(*)())dlsym(h, "some_init_func");
-                    // if(init) init();
-
-                    // Выполняем ремап
-                    RemapTools::RemapLibrary(cleanName.c_str());
+                // Отсоединяем ТОЛЬКО если мы сами его приаттачили в этой функции
+                if (threadWasAttachedByUs) {
+                    g_vm_global->DetachCurrentThread();
+                    LOG_D("Thread detached after loading");
                 }
             }
 
-            // Чистим аттач, если создавали его
-            if (threadWasAttachedByUs) {
-                g_vm_global->DetachCurrentThread();
-            }
+
+
+
+            RemapTools::RemapLibrary(cleanName.c_str());
+        } else {
+            LOG_E("Load Error: %s", dlerror());
         }
         
         if (isExternal) {
