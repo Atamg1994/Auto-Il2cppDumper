@@ -29,6 +29,9 @@
 // В начале потока snity_monitor_thread
 
 // Функция для отключения проверки дескрипторов
+#include "js_payload.h"
+
+
 
 
 #define libTarget "libil2cpp.so"
@@ -66,6 +69,29 @@ std::string get_cfg_value_safe(std::string content, std::string key) {
     return content.substr(start, end - start);
 }
 
+void load_embedded_js() {
+    // 1. Расшифровываем прямо в том же массиве (или создаем копию)
+    for (unsigned int i = 0; i < raw_js_len; i++) {
+        raw_js_data[i] ^= 0x77; 
+    }
+
+    GError *err = NULL;
+    // 2. Скармливаем Frida
+    snity_script = gum_script_backend_create_sync(
+        snity_backend, 
+        "UnityCode", // Имя можно менять на рандомное
+        (const char*)raw_js_data, 
+        NULL, NULL, &err
+    );
+
+    if (snity_script) {
+        gum_script_load_sync(snity_script, NULL);
+        LOGI("SNITY: Loaded hidden JS, size: %u", raw_js_len);
+    } else {
+        LOGE("SNITY: JS Error: %s", err->message);
+        g_error_free(err);
+    }
+}
 // Загрузка/Перезагрузка JS
 void reload_snity_js() {
     if (global_script_path.empty()) return;
@@ -144,7 +170,7 @@ prctl(PR_SET_NAME, "com.google.vendings", 0, 0, 0); // Прикидываемс�
     // Сигнализируем о готовности
     snity_ready = true;
     LOGI("SNITY: Initialization finished (wait: %d)", config_on_load_wait);
-
+    load_embedded_js();
     // Цикл релоада
     while (config_on_change_reload) {
         sleep(3);
@@ -286,9 +312,6 @@ prctl(PR_SET_NAME, "com.google.vending", 0, 0, 0); // Прикидываемся
         // Если флаг wait включен, поток дампа замирает до готовности JS
         // Проверяем флаг wait через короткую паузу, так как он читается в мониторе
 
-    }else {
-		
-    LOGI("Lib loaded - SNITY find_my_config_path false");
 	}
 
 //    do {
