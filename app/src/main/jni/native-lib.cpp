@@ -582,29 +582,52 @@ void dump_thread() {
     }
     g_vm_global->DetachCurrentThread();
 }
+#include <jni.h>
+#include <dlfcn.h>
+#include <android/log.h>
+#include <thread>
+#include <memory>
+
+// Типы для JNI функций
+typedef jint (*JNI_OnLoad_t)(JavaVM*, void*);
+typedef jint (*RegisterNatives_t)(JNIEnv*, jclass, const JNINativeMethod*, jint);
+
 static void* hOrig = nullptr;
-JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+static RegisterNatives_t orig_RegisterNatives = nullptr;
 
+// Наш хук на RegisterNatives
+jint hooked_RegisterNatives(JNIEnv* env, jclass clazz, const JNINativeMethod* methods, jint nMethods) {
+    __android_log_print(ANDROID_LOG_INFO, "PROXY", "Intercepted RegisterNatives for %d methods", nMethods);
+    // Пробрасываем вызов в реальный JNI
+    return orig_RegisterNatives(env, clazz, methods, nMethods);
+}
+
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    JNIEnv* env;
+    if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) return -1;
+
+    // --- МАГИЯ РЕГИСТРАЦИИ ---
+    // Подменяем RegisterNatives в таблице функций JNIEnv
+    if (orig_RegisterNatives == nullptr) {
+        JNINativeInterface* functions = (JNINativeInterface*)env->functions;
+        orig_RegisterNatives = functions->RegisterNatives;
+        functions->RegisterNatives = hooked_RegisterNatives;
+    }
+
+    // Твой старый код инициализации
     g_vm_global = vm;
-    g_jvm = std::make_unique<jni::JvmRef<jni::kDefaultJvm>>(vm);
-    // Инициализируем через reset, как в примере Google
-    //g_jvm.reset(new jni::JvmRef<jni::kDefaultJvm>{vm});
     static jni::JvmRef<jni::kDefaultJvm> jvm{vm};
-
-    LOG_D(" JNI System Initialized (Release 1.5.0)");
+    __android_log_print(ANDROID_LOG_DEBUG, "PROXY", "JNI System Initialized");
 
     std::thread(dump_thread).detach();
+
+    // Вызываем JNI_OnLoad оригинала
     JNI_OnLoad_t orig_JNI_OnLoad = (JNI_OnLoad_t)dlsym(hOrig, "JNI_OnLoad");
-    
     if (orig_JNI_OnLoad) {
         return orig_JNI_OnLoad(vm, reserved);
     }
     return JNI_VERSION_1_6;
 }
-
-
-
-
 
 __attribute__((constructor)) void init_proxy() {
     #if defined(__aarch64__)
@@ -612,8 +635,6 @@ __attribute__((constructor)) void init_proxy() {
     #else
         hOrig = dlopen("libkxqpplatform_32_real.so", RTLD_NOW);
     #endif
-
-    // === ТВОЙ КОД ЗДЕСЬ ===
     __android_log_print(ANDROID_LOG_INFO, "PROXY", "INJECTED SUCCESS");
 }
 
