@@ -21,8 +21,8 @@
 
 
 #undef LOG_TAG
-#define LOG_TAG "SoLoader"
-
+#define LOG_TAG "SoLoader_luluboxsuper"
+static const char* TARGET_PACKAGE_SPACES = "com.lulu.luluboxsuper";
 // Прямые макросы, чтобы не зависеть от чужих файлов
 #define LOG_D(fmt, ...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
 #define LOG_E(fmt, ...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "[%d|%ld] " fmt, getpid(), syscall(SYS_gettid), ##__VA_ARGS__)
@@ -37,7 +37,7 @@ JavaVM* g_vm_global = nullptr;
 static std::unique_ptr<jni::JvmRef<jni::kDefaultJvm>> g_jvm;
 std::string GLOBAL_CACHE_DIR = "";
 std::string GLOBAL_PKG_NAME = "";
-const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader";
+const std::string SD_ROOT = "/storage/emulated/0/Documents/SoLoader_luluboxsuper";
 
 static constexpr Class kClassLoader{"java/lang/ClassLoader",
                                     Method{"toString", Return<jstring>{}, Params{}}
@@ -186,7 +186,7 @@ void init_virtual_paths(JNIEnv* env) {
             if (g_jvm) {
                 g_jvm->SetFallbackClassLoaderFromJObject(static_cast<jobject>(appJob));
             } else {
-                LOGE("[SoLoader] CRITICAL: g_jvm is NULL, skipping FallbackLoader!");
+                LOGE("[SoLoader_luluboxsuper] CRITICAL: g_jvm is NULL, skipping FallbackLoader!");
             }
             jni::LocalObject<kContext> app{std::move(appJob)};
             LOG_D(" LocalObject<kContext> initialized");
@@ -194,7 +194,7 @@ void init_virtual_paths(JNIEnv* env) {
             auto pkgName = app("getPackageName");
             if (static_cast<jstring>(pkgName) != nullptr) {
                 std::string tmpName = TO_STR(pkgName.Pin().ToString());
-                if (GLOBAL_PKG_NAME.empty() || (tmpName.find("com.gspace.android") == std::string::npos)) {
+                if (GLOBAL_PKG_NAME.empty() || (tmpName.find(TARGET_PACKAGE_SPACES) == std::string::npos)) {
                     GLOBAL_PKG_NAME = tmpName;
                 }
                 LOG_D(" GLOBAL_PKG_NAME set to: %s", GLOBAL_PKG_NAME.c_str());
@@ -207,7 +207,7 @@ void init_virtual_paths(JNIEnv* env) {
                 auto pathString = cacheFile("getAbsolutePath");
                 if (static_cast<jstring>(pathString) != nullptr) {
                     std::string tmpCache = TO_STR(pathString.Pin().ToString());
-                    if (GLOBAL_CACHE_DIR.empty() || (tmpCache.find("/virtual/") != std::string::npos)) {
+                    if (GLOBAL_CACHE_DIR.empty() || (tmpCache.find("/gameplugins/") != std::string::npos)) {
                         GLOBAL_CACHE_DIR = tmpCache;
                     }
                     LOG_D(" GLOBAL_CACHE_DIR set to: %s", GLOBAL_CACHE_DIR.c_str());
@@ -224,7 +224,7 @@ void init_virtual_paths(JNIEnv* env) {
                     if (static_cast<jstring>(procNameJS) != nullptr) {
                         std::string realName = TO_STR(procNameJS.Pin().ToString());
                         LOG_D(" Real Process Name: %s", realName.c_str());
-                        if (!realName.empty() && realName.find("com.gspace.android") == std::string::npos) {
+                        if (!realName.empty() && realName.find(TARGET_PACKAGE_SPACES) == std::string::npos) {
                             GLOBAL_PKG_NAME = realName;
                             LOG_D(" !!! TARGET CAUGHT IN BIND DATA !!! PKG: %s", GLOBAL_PKG_NAME.c_str());
                         }
@@ -263,18 +263,18 @@ void init_virtual_paths(JNIEnv* env) {
                 }
             }
             */
-            if (!GLOBAL_PKG_NAME.empty() && GLOBAL_PKG_NAME.find("com.gspace.android") == std::string::npos) {
+            if (!GLOBAL_PKG_NAME.empty() && GLOBAL_PKG_NAME.find(TARGET_PACKAGE_SPACES) == std::string::npos) {
                 LOG_D(" <<< SUCCESS: Guest app identified: %s", GLOBAL_PKG_NAME.c_str());
                 return;
             }
         } else {
-            LOGW("[SoLoader] appJob is NULL, ActivityThread not ready.");
+            LOGW("[SoLoader_luluboxsuper] appJob is NULL, ActivityThread not ready.");
         }
 
         usleep(250000);
         retry++;
     }
-    LOGE("[SoLoader] !!! FAILED to init virtual paths after 100 retries !!!");
+    LOGE("[SoLoader_luluboxsuper] !!! FAILED to init virtual paths after 100 retries !!!");
 }
 
 
