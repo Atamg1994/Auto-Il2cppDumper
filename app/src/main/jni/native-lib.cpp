@@ -671,17 +671,40 @@ typedef int (*open_t)(const char*, int, mode_t);
 typedef int (*stat_t)(const char*, struct stat*);
 
 // Хук на open (самый важный)
-extern "C" int open(const char* pathname, int flags, mode_t mode) {
-    static open_t orig_open = (open_t)dlsym(RTLD_NEXT, "open");
+#include <fcntl.h>
+#include <stdarg.h>
 
+// Определяем тип для оригинальной функции
+typedef int (*open_t)(const char*, int, ...);
+
+extern "C" int open(const char* pathname, int flags, ...) {
+    static open_t orig_open = nullptr;
+    if (!orig_open) {
+        orig_open = (open_t)dlsym(RTLD_NEXT, "open");
+    }
+
+    mode_t mode = 0;
+    // Если передан флаг создания файла, извлекаем mode из аргументов ...
+    if (flags & O_CREAT) {
+        va_list args;
+        va_start(args, flags);
+        mode = va_arg(args, mode_t);
+        va_end(args);
+    }
+
+    // Твоя логика подмены путей
     if (pathname && strstr(pathname, "libkxqpplatform.so")) {
-        // Если кто-то (защита) хочет прочитать наш прокси - подсовываем оригинал
         const char* redirect = strstr(pathname, "_32") ? "libkxqpplatform_32P.so" : "libkxqpplatformP.so";
-        __android_log_print(ANDROID_LOG_WARN, "PROXY", "REDIRECTION open: %s -> %s", pathname, redirect);
+        __android_log_print(ANDROID_LOG_WARN, "PROXY", "Перенаправление open: %s -> %s", pathname, redirect);
+        
+        // Вызываем оригинал с подмененным путем
         return orig_open(redirect, flags, mode);
     }
+
+    // Обычный вызов
     return orig_open(pathname, flags, mode);
 }
+
 
 // Хук на stat (проверка размера/даты файла)
 extern "C" int stat(const char* pathname, struct stat* buf) {
