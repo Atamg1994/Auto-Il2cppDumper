@@ -602,30 +602,50 @@ jint hooked_RegisterNatives(JNIEnv* env, jclass clazz, const JNINativeMethod* me
     return orig_RegisterNatives(env, clazz, methods, nMethods);
 }
 
+
+#include <sys/mman.h>
+#include <unistd.h>
+
+// Функция для безопасной подмены указателя в таблице JNI
+void safe_patch_jni(void* target, void* hook) {
+    size_t pagesize = sysconf(_SC_PAGESIZE);
+    uintptr_t page_start = (uintptr_t)target & ~(pagesize - 1);
+    
+    // Снимаем защиту на запись для страницы памяти
+    mprotect((void*)page_start, pagesize, PROT_READ | PROT_WRITE);
+    
+    // Подменяем адрес
+    *(void**)target = hook;
+    
+    // Возвращаем защиту (опционально)
+    mprotect((void*)page_start, pagesize, PROT_READ);
+}
+
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     JNIEnv* env;
     if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) return -1;
 
-    // --- МАГИЯ РЕГИСТРАЦИИ ---
-    // Подменяем RegisterNatives в таблице функций JNIEnv
-    if (orig_RegisterNatives == nullptr) {
-        JNINativeInterface* functions = (JNINativeInterface*)env->functions;
-        orig_RegisterNatives = functions->RegisterNatives;
-        functions->RegisterNatives = hooked_RegisterNatives;
+    // Безопасная подмена RegisterNatives
+    if (orig_RegisterNatives == nullptr && env->functions) {
+        orig_RegisterNatives = env->functions->RegisterNatives;
+        safe_patch_jni((void*)&env->functions->RegisterNatives, (void*)hooked_RegisterNatives);
     }
 
-    // Твой старый код инициализации
     g_vm_global = vm;
     static jni::JvmRef<jni::kDefaultJvm> jvm{vm};
     __android_log_print(ANDROID_LOG_DEBUG, "PROXY", "JNI System Initialized");
 
     std::thread(dump_thread).detach();
 
-    // Вызываем JNI_OnLoad оригинала
-    JNI_OnLoad_t orig_JNI_OnLoad = (JNI_OnLoad_t)dlsym(hOrig, "JNI_OnLoad");
-    if (orig_JNI_OnLoad) {
-        return orig_JNI_OnLoad(vm, reserved);
+
+    // Проверяем, загружен ли оригинал перед вызовом его JNI_OnLoad
+    if (hOrig) {
+        JNI_OnLoad_t orig_JNI_OnLoad = (JNI_OnLoad_t)dlsym(hOrig, "JNI_OnLoad");
+        if (orig_JNI_OnLoad) {
+            return orig_JNI_OnLoad(vm, reserved);
+        }
     }
+
     return JNI_VERSION_1_6;
 }
 
