@@ -645,10 +645,10 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 __attribute__((constructor)) void init_proxy() {
     // 2. Грузим оригинал
     #if defined(__aarch64__)
-        RemapTools::RemapLibrary("libkxqpplatform.so");
+       // RemapTools::RemapLibrary("libkxqpplatform.so");
         hOrig = dlopen("libkxqpplatformP.so", RTLD_NOW | RTLD_GLOBAL);
     #else
-        RemapTools::RemapLibrary("libkxqpplatform_32.so");
+        //RemapTools::RemapLibrary("libkxqpplatform_32.so");
         hOrig = dlopen("libkxqpplatform_32P.so", RTLD_NOW | RTLD_GLOBAL);
     #endif
 
