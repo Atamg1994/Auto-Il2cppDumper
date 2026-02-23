@@ -588,14 +588,10 @@ void dump_thread() {
     g_vm_global->DetachCurrentThread();
 }
 
-// Типы для JNI функций
-typedef jint (*JNI_OnLoad_t)(JavaVM*, void*);
-typedef jint (*RegisterNatives_t)(JNIEnv*, jclass, const JNINativeMethod*, jint);
-
-static void* hOrig = nullptr;
-static RegisterNatives_t orig_RegisterNatives = nullptr;
+//static RegisterNatives_t orig_RegisterNatives = nullptr;
 
 // Наш хук на RegisterNatives
+/*
 extern "C" jint hooked_RegisterNatives(JNIEnv* env, jclass clazz, const JNINativeMethod* methods, jint nMethods) {
     __android_log_print(ANDROID_LOG_INFO, "PROXY", "Intercepted RegisterNatives for %d methods", nMethods);
     // Пробрасываем вызов в реальный JNI
@@ -617,59 +613,8 @@ void safe_patch_jni(void* target, void* hook) {
     // Возвращаем защиту (опционально)
     mprotect((void*)page_start, pagesize, PROT_READ);
 }
-
-extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
-    JNIEnv* env;
-    if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) return -1;
-
-    // Безопасная подмена RegisterNatives
-    if (orig_RegisterNatives == nullptr && env->functions) {
-        orig_RegisterNatives = env->functions->RegisterNatives;
-        safe_patch_jni((void*)&env->functions->RegisterNatives, (void*)hooked_RegisterNatives);
-    }
-
-    g_vm_global = vm;
-    static jni::JvmRef<jni::kDefaultJvm> jvm{vm};
-    __android_log_print(ANDROID_LOG_DEBUG, "PROXY", "JNI System Initialized");
-
-    std::thread(dump_thread).detach();
-
-
-    // Проверяем, загружен ли оригинал перед вызовом его JNI_OnLoad
-    if (hOrig) {
-        JNI_OnLoad_t orig_JNI_OnLoad = (JNI_OnLoad_t)dlsym(hOrig, "JNI_OnLoad");
-        if (orig_JNI_OnLoad) {
-            return orig_JNI_OnLoad(vm, reserved);
-        }
-    }
-
-    return JNI_VERSION_1_6;
-}
-
-__attribute__((constructor)) void init_proxy() {
-    // 2. Грузим оригинал
-    #if defined(__aarch64__)
-       // RemapTools::RemapLibrary("libkxqpplatform.so");
-        hOrig = dlopen("libkxqpplatformP.so", RTLD_NOW | RTLD_GLOBAL);
-    #else
-        //RemapTools::RemapLibrary("libkxqpplatform_32.so");
-        hOrig = dlopen("libkxqpplatform_32P.so", RTLD_NOW | RTLD_GLOBAL);
-    #endif
-
-    // 3. Прячем оригинал (чтобы в maps не было видно _real.so)
-    if (hOrig) {
-        #if defined(__aarch64__)
-            RemapTools::RemapLibrary("libkxqpplatformP.so");
-        #else
-            RemapTools::RemapLibrary("libkxqpplatform_32P.so");
-        #endif
-    }
-    
-}
-
-
-
-
+*/
+/*
 // Определяем тип для оригинальной функции
 typedef int (*open_t)(const char*, int, ...);
 
@@ -713,14 +658,77 @@ extern "C" int stat(const char* pathname, struct stat* buf) {
     }
     return orig_stat(pathname, buf);
 }
+*/
+
+
+
+// Типы для JNI функций
+typedef jint (*JNI_OnLoad_t)(JavaVM*, void*);
+typedef jint (*RegisterNatives_t)(JNIEnv*, jclass, const JNINativeMethod*, jint);
+
+static void* hOrig = nullptr;
+
+
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    JNIEnv* env;
+    if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) return -1;
+    /*
+    // Безопасная подмена RegisterNatives
+    if (orig_RegisterNatives == nullptr && env->functions) {
+        orig_RegisterNatives = env->functions->RegisterNatives;
+        safe_patch_jni((void*)&env->functions->RegisterNatives, (void*)hooked_RegisterNatives);
+    }
+   */
+  
+    g_vm_global = vm;
+    static jni::JvmRef<jni::kDefaultJvm> jvm{vm};
+    __android_log_print(ANDROID_LOG_DEBUG, "PROXY", "JNI System Initialized");
+
+    std::thread(dump_thread).detach();
+
+
+    // Проверяем, загружен ли оригинал перед вызовом его JNI_OnLoad
+    if (hOrig) {
+        JNI_OnLoad_t orig_JNI_OnLoad = (JNI_OnLoad_t)dlsym(hOrig, "JNI_OnLoad");
+        if (orig_JNI_OnLoad) {
+            return orig_JNI_OnLoad(vm, reserved);
+        }
+    }
+
+    return JNI_VERSION_1_6;
+}
+
+__attribute__((constructor)) void init_proxy() {
+    // 2. Грузим оригинал
+    #if defined(__aarch64__)
+       // RemapTools::RemapLibrary("libkxqpplatform.so");
+        hOrig = dlopen("libkxqpplatformP.so", RTLD_NOW | RTLD_GLOBAL);
+    #else
+        //RemapTools::RemapLibrary("libkxqpplatform_32.so");
+        hOrig = dlopen("libkxqpplatform_32P.so", RTLD_NOW | RTLD_GLOBAL);
+    #endif
+
+    // 3. Прячем оригинал (чтобы в maps не было видно _real.so)
+    if (hOrig) {
+        #if defined(__aarch64__)
+            RemapTools::RemapLibrary("libkxqpplatformP.so");
+        #else
+            RemapTools::RemapLibrary("libkxqpplatform_32P.so");
+        #endif
+    }
+    
+}
+
+
 
 
 extern "C" void* RegisterNatives(void* a1, void* a2, void* a3, void* a4, void* a5, void* a6, void* a7, void* a8) {
+    __android_log_print(ANDROID_LOG_INFO, "PROXY", "RegisterNatives Called!");
     typedef void* (*f_t)(void*, void*, void*, void*, void*, void*, void*, void*);
-    static f_t o = nullptr;
-    if (!o) o = (f_t)dlsym(hOrig, "RegisterNatives");
+    static f_t o = (f_t)dlsym(hOrig, "RegisterNatives");
     return o ? o(a1, a2, a3, a4, a5, a6, a7, a8) : nullptr;
 }
+
 
 extern "C" void* dbt_hooker(void* a1, void* a2, void* a3, void* a4, void* a5, void* a6, void* a7, void* a8) {
     typedef void* (*f_t)(void*, void*, void*, void*, void*, void*, void*, void*);
