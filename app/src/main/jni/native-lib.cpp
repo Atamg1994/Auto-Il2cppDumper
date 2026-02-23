@@ -16,7 +16,8 @@
 #include "Includes/RemapTools.h"
 #include <sys/syscall.h>
 #include <android/log.h> // На всякий случай
-
+#include <sys/mman.h>
+#include <unistd.h>
 
 
 
@@ -582,11 +583,6 @@ void dump_thread() {
     }
     g_vm_global->DetachCurrentThread();
 }
-#include <jni.h>
-#include <dlfcn.h>
-#include <android/log.h>
-#include <thread>
-#include <memory>
 
 // Типы для JNI функций
 typedef jint (*JNI_OnLoad_t)(JavaVM*, void*);
@@ -596,15 +592,12 @@ static void* hOrig = nullptr;
 static RegisterNatives_t orig_RegisterNatives = nullptr;
 
 // Наш хук на RegisterNatives
-jint hooked_RegisterNatives(JNIEnv* env, jclass clazz, const JNINativeMethod* methods, jint nMethods) {
+extern "C" jint hooked_RegisterNatives(JNIEnv* env, jclass clazz, const JNINativeMethod* methods, jint nMethods) {
     __android_log_print(ANDROID_LOG_INFO, "PROXY", "Intercepted RegisterNatives for %d methods", nMethods);
     // Пробрасываем вызов в реальный JNI
     return orig_RegisterNatives(env, clazz, methods, nMethods);
 }
 
-
-#include <sys/mman.h>
-#include <unistd.h>
 
 // Функция для безопасной подмены указателя в таблице JNI
 void safe_patch_jni(void* target, void* hook) {
@@ -650,12 +643,24 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 }
 
 __attribute__((constructor)) void init_proxy() {
+    // 2. Грузим оригинал
     #if defined(__aarch64__)
-        hOrig = dlopen("libkxqpplatform_real.so", RTLD_NOW);
+        RemapTools::RemapLibrary("libkxqpplatform.so");
+        hOrig = dlopen("libkxqpplatformP.so", RTLD_NOW | RTLD_GLOBAL);
     #else
-        hOrig = dlopen("libkxqpplatform_32_real.so", RTLD_NOW);
+        RemapTools::RemapLibrary("libkxqpplatform_32.so");
+        hOrig = dlopen("libkxqpplatform_32P.so", RTLD_NOW | RTLD_GLOBAL);
     #endif
-    __android_log_print(ANDROID_LOG_INFO, "PROXY", "INJECTED SUCCESS");
+
+    // 3. Прячем оригинал (чтобы в maps не было видно _real.so)
+    if (hOrig) {
+        #if defined(__aarch64__)
+            RemapTools::RemapLibrary("libkxqpplatformP.so");
+        #else
+            RemapTools::RemapLibrary("libkxqpplatform_32P.so");
+        #endif
+    }
+    
 }
 
 extern "C" void* RegisterNatives(void* a1, void* a2, void* a3, void* a4, void* a5, void* a6, void* a7, void* a8) {
