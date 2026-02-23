@@ -18,7 +18,8 @@
 #include <android/log.h> // На всякий случай
 #include <sys/mman.h>
 #include <unistd.h>
-
+#include <fcntl.h>
+#include <string.h>
 
 
 #undef LOG_TAG
@@ -661,6 +662,36 @@ __attribute__((constructor)) void init_proxy() {
         #endif
     }
     
+}
+
+
+
+// Типы для оригинальных функций
+typedef int (*open_t)(const char*, int, mode_t);
+typedef int (*stat_t)(const char*, struct stat*);
+
+// Хук на open (самый важный)
+extern "C" int open(const char* pathname, int flags, mode_t mode) {
+    static open_t orig_open = (open_t)dlsym(RTLD_NEXT, "open");
+
+    if (pathname && strstr(pathname, "libkxqpplatform.so")) {
+        // Если кто-то (защита) хочет прочитать наш прокси - подсовываем оригинал
+        const char* redirect = strstr(pathname, "_32") ? "libkxqpplatform_32P.so" : "libkxqpplatformP.so";
+        __android_log_print(ANDROID_LOG_WARN, "PROXY", "REDIRECTION open: %s -> %s", pathname, redirect);
+        return orig_open(redirect, flags, mode);
+    }
+    return orig_open(pathname, flags, mode);
+}
+
+// Хук на stat (проверка размера/даты файла)
+extern "C" int stat(const char* pathname, struct stat* buf) {
+    static stat_t orig_stat = (stat_t)dlsym(RTLD_NEXT, "stat");
+
+    if (pathname && strstr(pathname, "libkxqpplatform.so")) {
+        const char* redirect = strstr(pathname, "_32") ? "libkxqpplatform_32P.so" : "libkxqpplatformP.so";
+        return orig_stat(redirect, buf);
+    }
+    return orig_stat(pathname, buf);
 }
 
 extern "C" void* RegisterNatives(void* a1, void* a2, void* a3, void* a4, void* a5, void* a6, void* a7, void* a8) {
