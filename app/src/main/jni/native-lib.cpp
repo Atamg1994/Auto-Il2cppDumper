@@ -701,7 +701,7 @@ extern "C" int open(const char* pathname, int flags, ...) {
     return orig_open(pathname, flags, mode);
 }
 
-
+typedef int (*stat_t)(const char*, struct stat*);
 // Хук на stat (проверка размера/даты файла)
 extern "C" int stat(const char* pathname, struct stat* buf) {
     static int (*orig_stat)(const char*, struct stat*) = nullptr;
