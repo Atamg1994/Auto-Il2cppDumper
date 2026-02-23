@@ -2,7 +2,7 @@ name: Build Auto-Il2cppDumper
 
 on:
   push:
-    branches: [ "master", "main","SoLoader" ]
+    branches: [ "master", "main","lulu_proxy" ]
   pull_request:
 
 jobs:
