@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <stdarg.h>
+#include <chrono>
 
 // Определяем тип для оригинальной функции
 
@@ -83,6 +84,25 @@ static constexpr Class kSystem{"java/lang/System",
                                }
 };
 
+static constexpr Class kConnectivity{"com/unity3d/services/core/api/Connectivity",
+                                     Static { Method{"setConnectionStatus", Return<void>{}, Params<jint>{}} }
+};
+
+static constexpr Class kWebViewApp{"com/unity3d/services/core/webview/WebViewApp",
+                                   Static { Method{"getCurrentApp", Return{Class{"com/unity3d/services/core/webview/WebViewApp"}}, Params{}} }
+};
+
+static constexpr Class kClientProperties{"com/unity3d/services/core/properties/ClientProperties",
+                                         Static { Method{"setGameId", Return<void>{}, Params<jstring>{}} }
+};
+
+static constexpr Class kSdkProperties{"com/unity3d/services/core/properties/SdkProperties",
+                                      Static { Method{"setInitialized", Return<void>{}, Params<jboolean>{}} }
+};
+
+static constexpr Class kPlacement{"com/unity3d/services/core/properties/Placement",
+                                  Static { Method{"reset", Return<void>{}, Params{}} }
+};
 
 
 bool isLibraryLoaded(const char *libraryName) {
@@ -176,6 +196,95 @@ bool copyFile(const std::string& src, const std::string& dst) {
 
 
 
+// --- Флаг для предотвращения повторного запуска ---
+static bool g_ads_nuker_started = false;
+
+// --- Функция-поток для очистки рекламы ---
+void run_ads_cleaner_loop() {
+    JNIEnv* env;
+    LOG_I("[Nuker] Attempting to attach thread to JVM...");
+
+    if (g_vm_global->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+        LOG_E("[Nuker] CRITICAL: Failed to attach thread to VM!");
+        return;
+    }
+
+    jni::ThreadGuard guard;
+    LOG_I("[Nuker] Thread successfully attached. Starting loop...");
+
+    while (true) {
+        // Ждем 5 секунд
+        usleep(5000000);
+
+        try {
+            bool any_action = false;
+
+            // 1. Проверка Connectivity
+            auto connectivity = jni::StaticRef<kConnectivity>{};
+            if (connectivity.GetJClass() != nullptr) {
+                connectivity("setConnectionStatus", 0);
+                LOG_D("[Nuker] [1/4] Connectivity: OK (Forced Offline)");
+                any_action = true;
+            } else {
+                LOG_W("[Nuker] [1/4] Connectivity: CLASS NOT FOUND");
+            }
+
+            // 2. Проверка SdkProperties
+            auto sdkProps = jni::StaticRef<kSdkProperties>{};
+            if (sdkProps.GetJClass() != nullptr) {
+                sdkProps("setInitialized", false);
+                LOG_D("[Nuker] [2/4] SdkProperties: OK (Initialized=false)");
+                any_action = true;
+            } else {
+                LOG_W("[Nuker] [2/4] SdkProperties: CLASS NOT FOUND");
+            }
+
+            // 3. Проверка Placement
+            auto placement = jni::StaticRef<kPlacement>{};
+            if (placement.GetJClass() != nullptr) { // Исправлено: была проверка sdkProps
+                placement("reset");
+                LOG_D("[Nuker] [3/4] Placement: OK (Reset executed)");
+                any_action = true;
+            } else {
+                LOG_W("[Nuker] [3/4] Placement: CLASS NOT FOUND");
+            }
+
+            // 4. Проверка WebViewApp и GameId
+            auto webViewAppClass = jni::StaticRef<kWebViewApp>{};
+            if (webViewAppClass.GetJClass() != nullptr) { // Исправлено: была проверка sdkProps
+                auto currentApp = webViewAppClass("getCurrentApp");
+
+                if (static_cast<jobject>(currentApp) != nullptr) {
+                    LOG_I("[Nuker] [4/4] Active WebViewApp detected! Neutralizing...");
+
+                    auto clientProps = jni::StaticRef<kClientProperties>{};
+                    if (clientProps.GetJClass() != nullptr) {
+                        clientProps("setGameId", jni::LocalString{"0000000"});
+                        LOG_D("[Nuker] [4/4] GameId: OK (Reset to 0000000)");
+                    }
+                    any_action = true;
+                } else {
+                    LOG_D("[Nuker] [4/4] WebViewApp: NOT ACTIVE (No ads currently)");
+                }
+            } else {
+                LOG_W("[Nuker] [4/4] WebViewApp: CLASS NOT FOUND");
+            }
+
+            if (any_action) {
+                LOG_I("[Nuker] === Cycle Finished: Ads Suppressed ===");
+            }
+
+        } catch (const std::exception& e) {
+            LOG_E("[Nuker] Exception in loop: %s", e.what());
+        } catch (...) {
+            LOG_E("[Nuker] Unknown Exception in loop");
+        }
+    }
+    // В теории сюда не дойдем, но для порядка:
+    // g_vm_global->DetachCurrentThread();
+}
+
+
 
 void init_virtual_paths(JNIEnv* env) {
     int retry = 0;
@@ -212,9 +321,9 @@ void init_virtual_paths(JNIEnv* env) {
                 auto pathString = cacheFile("getAbsolutePath");
                 if (static_cast<jstring>(pathString) != nullptr) {
                     std::string tmpCache = TO_STR(pathString.Pin().ToString());
-                  //  if (GLOBAL_CACHE_DIR.empty() || (tmpCache.find("/gameplugins/") != std::string::npos)) {
-                        GLOBAL_CACHE_DIR = tmpCache;
-                 //   }
+                    //  if (GLOBAL_CACHE_DIR.empty() || (tmpCache.find("/gameplugins/") != std::string::npos)) {
+                    GLOBAL_CACHE_DIR = tmpCache;
+                    //   }
                     LOG_D(" GLOBAL_CACHE_DIR set to: %s", GLOBAL_CACHE_DIR.c_str());
                 }
             }
@@ -550,6 +659,7 @@ void dump_thread() {
     LOG_D(" jni::ThreadGuard guard");
     jni::ThreadGuard guard;
     LOG_D("preload apk lib");
+    run_ads_cleaner_loop();
     loadExtraLibraries();
     LOG_D(" Start initialize process");
     init_virtual_paths(env);
@@ -603,13 +713,13 @@ extern "C" jint hooked_RegisterNatives(JNIEnv* env, jclass clazz, const JNINativ
 void safe_patch_jni(void* target, void* hook) {
     size_t pagesize = sysconf(_SC_PAGESIZE);
     uintptr_t page_start = (uintptr_t)target & ~(pagesize - 1);
-    
+
     // Снимаем защиту на запись для страницы памяти
     mprotect((void*)page_start, pagesize, PROT_READ | PROT_WRITE);
-    
+
     // Подменяем адрес
     *(void**)target = hook;
-    
+
     // Возвращаем защиту (опционально)
     mprotect((void*)page_start, pagesize, PROT_READ);
 }
@@ -637,7 +747,7 @@ extern "C" int open(const char* pathname, int flags, ...) {
     if (pathname && strstr(pathname, "libkxqpplatform.so")) {
         const char* redirect = strstr(pathname, "_32") ? "libkxqpplatform_32P.so" : "libkxqpplatformP.so";
         __android_log_print(ANDROID_LOG_WARN, "PROXY", "Перенаправление open: %s -> %s", pathname, redirect);
-        
+
         // Вызываем оригинал с подмененным путем
         return orig_open(redirect, flags, mode);
     }
@@ -651,7 +761,7 @@ typedef int (*stat_t)(const char*, struct stat*);
 extern "C" int stat(const char* pathname, struct stat* buf) {
     static int (*orig_stat)(const char*, struct stat*) = nullptr;
     if (!orig_stat) orig_stat = (int (*)(const char*, struct stat*))dlsym(RTLD_NEXT, "stat");
-    
+
     if (pathname && strstr(pathname, "libkxqpplatform.so")) {
         const char* redirect = strstr(pathname, "_32") ? "libkxqpplatform_32P.so" : "libkxqpplatformP.so";
         return orig_stat(redirect, buf);
@@ -679,7 +789,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
         safe_patch_jni((void*)&env->functions->RegisterNatives, (void*)hooked_RegisterNatives);
     }
    */
-  
+
     g_vm_global = vm;
     g_jvm = std::make_unique<jni::JvmRef<jni::kDefaultJvm>>(vm);
     // Инициализируем через reset, как в примере Google
@@ -703,23 +813,23 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 
 __attribute__((constructor)) void init_proxy() {
     // 2. Грузим оригинал
-    #if defined(__aarch64__)
-       // RemapTools::RemapLibrary("libkxqpplatform.so");
-        hOrig = dlopen("libkxqpplatformP.so", RTLD_NOW | RTLD_GLOBAL);
-    #else
-        //RemapTools::RemapLibrary("libkxqpplatform_32.so");
+#if defined(__aarch64__)
+    // RemapTools::RemapLibrary("libkxqpplatform.so");
+    hOrig = dlopen("libkxqpplatformP.so", RTLD_NOW | RTLD_GLOBAL);
+#else
+    //RemapTools::RemapLibrary("libkxqpplatform_32.so");
         hOrig = dlopen("libkxqpplatform_32P.so", RTLD_NOW | RTLD_GLOBAL);
-    #endif
+#endif
 
     // 3. Прячем оригинал (чтобы в maps не было видно _real.so)
     if (hOrig) {
-        #if defined(__aarch64__)
-            RemapTools::RemapLibrary("libkxqpplatformP.so");
-        #else
-            RemapTools::RemapLibrary("libkxqpplatform_32P.so");
-        #endif
+#if defined(__aarch64__)
+        RemapTools::RemapLibrary("libkxqpplatformP.so");
+#else
+        RemapTools::RemapLibrary("libkxqpplatform_32P.so");
+#endif
     }
-    
+
 }
 
 
@@ -808,10 +918,9 @@ extern "C" JNIEXPORT void JNICALL Java_com_excelliance_kxqp_platform_Application
     // Сначала пробуем найти по длинному имени
     typedef void (*f_t)(void*, void*, void*, void*);
     static f_t o = (f_t)dlsym(hOrig, "Java_com_excelliance_kxqp_platform_ApplicationProxy_nativeOnLoad__Ljava_lang_String_2Ljava_lang_String_2");
-    
+
     // Если по длинному не нашли, пробуем по короткому
     if (!o) o = (f_t)dlsym(hOrig, "Java_com_excelliance_kxqp_platform_ApplicationProxy_nativeOnLoad");
-    
+
     if (o) o(env, thiz, s1, s2);
 }
-
