@@ -261,29 +261,46 @@ void run_ads_cleaner_loop() {
             block_ads_globally();
             // Пытаемся получить лоадер, если его еще нет
             if (local_loader == nullptr) {
-                auto activityThread = jni::StaticRef<kActivityThread>{};
-                auto appObj = activityThread("currentApplication");
+                // 1. Пытаемся достать системный ClassLoader (он выше всех)
+                jclass clClass = env->FindClass("java/lang/ClassLoader");
+                jmethodID getSystemMethod = env->GetStaticMethodID(clClass, "getSystemClassLoader", "()Ljava/lang/ClassLoader;");
+                jobject systemLoader = env->CallStaticObjectMethod(clClass, getSystemMethod);
 
-                if (static_cast<jobject>(appObj) != nullptr) {
-                    jni::LocalObject<kContext> app{std::move(appObj)};
+                if (systemLoader != nullptr) {
+                    local_loader = env->NewGlobalRef(systemLoader);
+                    LOG_I("[Nuker] SYSTEM ClassLoader captured (Level: Parent)!");
 
-                    // Вытаскиваем ClassLoader через JNI напрямую
-                    jclass contextClass = env->GetObjectClass(static_cast<jobject>(app));
-                    jmethodID getLoaderMethod = env->GetMethodID(contextClass, "getClassLoader", "()Ljava/lang/ClassLoader;");
-                    jobject rawLoader = env->CallObjectMethod(static_cast<jobject>(app), getLoaderMethod);
-
-                    if (rawLoader != nullptr) {
-                        local_loader = env->NewGlobalRef(rawLoader);
-                        env->DeleteLocalRef(rawLoader);
-                        LOG_I("[Nuker] Successfully captured Game ClassLoader!");
+                    if (g_jvm) {
+                        g_jvm->SetFallbackClassLoaderFromJObject(local_loader);
                     }
-                    env->DeleteLocalRef(contextClass);
+                    env->DeleteLocalRef(systemLoader);
+                }
+                env->DeleteLocalRef(clClass);
+
+                // 2. Если системный не помог, ищем лоадер через Thread
+                if (local_loader == nullptr) {
+                    jclass threadClass = env->FindClass("java/lang/Thread");
+                    jmethodID currentThreadMethod = env->GetStaticMethodID(threadClass, "currentThread", "()Ljava/lang/Thread;");
+                    jobject threadObj = env->CallStaticObjectMethod(threadClass, currentThreadMethod);
+
+                    jmethodID getLoaderMethod = env->GetMethodID(threadClass, "getContextClassLoader", "()Ljava/lang/ClassLoader;");
+                    jobject threadLoader = env->CallObjectMethod(threadObj, getLoaderMethod);
+
+                    if (threadLoader != nullptr) {
+                        local_loader = env->NewGlobalRef(threadLoader);
+                        LOG_I("[Nuker] THREAD ClassLoader captured (Level: Context)!");
+                        if (g_jvm) g_jvm->SetFallbackClassLoaderFromJObject(local_loader);
+                        env->DeleteLocalRef(threadLoader);
+                    }
+                    env->DeleteLocalRef(threadObj);
+                    env->DeleteLocalRef(threadClass);
                 }
             }
 
+
             // Если лоадер найден, настраиваем jni-bind
             if (local_loader != nullptr) {
-                g_jvm->SetFallbackClassLoaderFromJObject(local_loader);
+              //  g_jvm->SetFallbackClassLoaderFromJObject(local_loader);
             } else {
                 LOG_W("[Nuker] Waiting for Application Context...");
                 continue;
@@ -301,7 +318,6 @@ void run_ads_cleaner_loop() {
 
             // 1. Connectivity
             if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/api/Connectivity")) {
-
                 auto connectivity = jni::StaticRef<kConnectivity>{};
                 if (connectivity.GetJClass() != nullptr) {
                     connectivity("setConnectionStatus", 0);
@@ -350,6 +366,7 @@ void run_ads_cleaner_loop() {
                     }
                 }
             }
+
 
             if (any_action) LOG_I("[Nuker] Cycle complete.");
 
