@@ -316,6 +316,89 @@ void block_ads_globally() {
     }
 }
 
+void kill_unity_activities(JNIEnv* env) {
+
+    const int RESULT_OK = -1;
+    // 1. Получаем ActivityThread.currentActivityThread()
+    jclass atClass = env->FindClass("android/app/ActivityThread");
+    jmethodID currentATMethod = env->GetStaticMethodID(atClass, "currentActivityThread", "()Landroid/app/ActivityThread;");
+    jobject atObj = env->CallStaticObjectMethod(atClass, currentATMethod);
+
+    if (atObj) {
+        // 2. Достаем поле mActivities (это ArrayMap или HashMap со всеми окнами)
+        jfieldID mActivitiesField = env->GetFieldID(atClass, "mActivities", "Landroid/util/ArrayMap;");
+        if (!mActivitiesField) {
+            env->ExceptionClear();
+            mActivitiesField = env->GetFieldID(atClass, "mActivities", "Ljava/util/Map;");
+        }
+
+        jobject mActivities = env->GetObjectField(atObj, mActivitiesField);
+        if (mActivities) {
+            // 3. Получаем Collection значений (объектов ActivityClientRecord)
+            jclass mapClass = env->FindClass("java/util/Map");
+            jmethodID valuesMethod = env->GetMethodID(mapClass, "values", "()Ljava/util/Collection;");
+            jobject valuesCol = env->CallObjectMethod(mActivities, valuesMethod);
+
+            jclass colClass = env->FindClass("java/util/Collection");
+            jmethodID toArrayMethod = env->GetMethodID(colClass, "toArray", "()[Ljava/lang/Object;");
+            jobjectArray recordsArray = (jobjectArray)env->CallObjectMethod(valuesCol, toArrayMethod);
+
+            if (recordsArray) {
+                jsize size = env->GetArrayLength(recordsArray);
+                for (int i = 0; i < size; i++) {
+                    jobject record = env->GetObjectArrayElement(recordsArray, i);
+                    if (record) {
+                        // 4. В ActivityClientRecord есть поле 'activity'
+                        jclass recordClass = env->GetObjectClass(record);
+                        jfieldID activityField = env->GetFieldID(recordClass, "activity", "Landroid/app/Activity;");
+                        jobject activityObj = env->GetObjectField(record, activityField);
+
+                        if (activityObj) {
+                            // 5. Проверяем имя класса Activity
+                            jclass actClass = env->GetObjectClass(activityObj);
+                            jmethodID getNameMethod = env->GetMethodID(env->FindClass("java/lang/Class"), "getName", "()Ljava/lang/String;");
+                            jstring classNameJS = (jstring)env->CallObjectMethod(actClass, getNameMethod);
+
+                            const char* className = env->GetStringUTFChars(classNameJS, nullptr);
+
+                            // Если это Unity Ads Activity — ГАСИМ
+                            if (strstr(className, "com.unity3d.services.ads.adunit.AdUnitActivity") ||
+                                strstr(className, "com.unity3d.ads.adunit.AdUnitActivity")) {// Находим метод setResult(int)
+                                jmethodID setResultMethod = env->GetMethodID(actClass, "setResult", "(I)V");
+                                if (setResultMethod) {
+                                    env->CallVoidMethod(activityObj, setResultMethod, RESULT_OK);
+                                    LOG_D("[Nuker] Result set to OK for: %s", className);
+                                }
+
+
+                                LOG_I("[Nuker] TARGET DETECTED: %s. Executing finish()...", className);
+
+                                jmethodID finishMethod = env->GetMethodID(actClass, "finish", "()V");
+                                env->CallVoidMethod(activityObj, finishMethod);
+                            }
+
+                            env->ReleaseStringUTFChars(classNameJS, className);
+                            env->DeleteLocalRef(classNameJS);
+                            env->DeleteLocalRef(actClass);
+                            env->DeleteLocalRef(activityObj);
+                        }
+                        env->DeleteLocalRef(recordClass);
+                        env->DeleteLocalRef(record);
+                    }
+                }
+                env->DeleteLocalRef(recordsArray);
+            }
+            env->DeleteLocalRef(valuesCol);
+            env->DeleteLocalRef(mActivities);
+        }
+        env->DeleteLocalRef(atObj);
+    }
+    env->DeleteLocalRef(atClass);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+
+
 void run_ads_cleaner_loop() {
     JNIEnv* env;
     if (g_vm_global->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
@@ -325,10 +408,11 @@ void run_ads_cleaner_loop() {
     jobject local_loader = nullptr;
 
     while (true) {
-        usleep(10000000); // 10 секунд
+        usleep(2000000); // 10 секунд
 
         try {
             block_ads_globally();
+            kill_unity_activities(env);
 
             // Очистка старой ссылки перед новым циклом поиска
             if (local_loader != nullptr) {
