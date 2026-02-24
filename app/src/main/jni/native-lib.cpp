@@ -212,9 +212,9 @@ void init_virtual_paths(JNIEnv* env) {
                 auto pathString = cacheFile("getAbsolutePath");
                 if (static_cast<jstring>(pathString) != nullptr) {
                     std::string tmpCache = TO_STR(pathString.Pin().ToString());
-                    if (GLOBAL_CACHE_DIR.empty() || (tmpCache.find("/gameplugins/") != std::string::npos)) {
+                  //  if (GLOBAL_CACHE_DIR.empty() || (tmpCache.find("/gameplugins/") != std::string::npos)) {
                         GLOBAL_CACHE_DIR = tmpCache;
-                    }
+                 //   }
                     LOG_D(" GLOBAL_CACHE_DIR set to: %s", GLOBAL_CACHE_DIR.c_str());
                 }
             }
