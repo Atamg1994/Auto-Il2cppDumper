@@ -233,6 +233,65 @@ bool is_class_available_via_loader(JNIEnv* env, jobject loader, const char* clas
     return false;
 }
 
+bool Check_ads(JNIEnv* env, jobject local_loader) {
+    if (local_loader == nullptr) return false;
+    bool any_action = false;
+    // 1. Connectivity
+    if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/api/Connectivity")) {
+        auto connectivity = jni::StaticRef<kConnectivity>{};
+        if (connectivity.GetJClass() != nullptr) {
+            connectivity("setConnectionStatus", 0);
+            LOG_D("[Nuker] Connectivity: Offline");
+            any_action = true;
+        }
+    } else {
+        LOG_W("[Nuker] Connectivity class not ready yet.");
+    }
+
+    // 2. SdkProperties (уже проверили выше, но для порядка)
+    if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/properties/SdkProperties")) {
+        auto sdkProps = jni::StaticRef<kSdkProperties>{};
+        if (sdkProps.GetJClass() != nullptr) {
+            sdkProps("setInitialized", false);
+            LOG_D("[Nuker] SdkProperties: Suppressed");
+            any_action = true;
+        }
+    }
+
+    // 3. Placement
+    if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/properties/Placement")) {
+        auto placement = jni::StaticRef<kPlacement>{};
+        if (placement.GetJClass() != nullptr) {
+            placement("reset");
+            LOG_D("[Nuker] Placement: Reset");
+            any_action = true;
+        }
+    }
+
+    // 4. WebViewApp & ClientProperties
+    if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/webview/WebViewApp")) {
+        auto webViewAppClass = jni::StaticRef<kWebViewApp>{};
+        if (webViewAppClass.GetJClass() != nullptr) {
+            auto currentApp = webViewAppClass("getCurrentApp");
+            if (static_cast<jobject>(currentApp) != nullptr) {
+
+                if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/properties/ClientProperties")) {
+                    auto clientProps = jni::StaticRef<kClientProperties>{};
+                    if (clientProps.GetJClass() != nullptr) {
+                        clientProps("setGameId", jni::LocalString{"0000000"});
+                        LOG_I("[Nuker] WebView neutralised");
+                        any_action = true;
+                    }
+                }
+            }
+        }
+    }
+
+
+    if (any_action) LOG_I("[Nuker] Cycle complete.");
+    return true;
+}
+
 
 
 void block_ads_globally() {
@@ -260,7 +319,11 @@ void run_ads_cleaner_loop() {
         try {
             block_ads_globally();
             // Пытаемся получить лоадер, если его еще нет
-            if (local_loader == nullptr) {
+
+            if (local_loader != nullptr) {
+                env->DeleteGlobalRef(local_loader);
+                local_loader = nullptr;
+            }
                 // 1. Пытаемся достать системный ClassLoader (он выше всех)
                 jclass clClass = env->FindClass("java/lang/ClassLoader");
                 jmethodID getSystemMethod = env->GetStaticMethodID(clClass, "getSystemClassLoader", "()Ljava/lang/ClassLoader;");
@@ -272,104 +335,58 @@ void run_ads_cleaner_loop() {
 
                     if (g_jvm) {
                         g_jvm->SetFallbackClassLoaderFromJObject(local_loader);
+                        Check_ads(env, local_loader);
                     }
                     env->DeleteLocalRef(systemLoader);
                 }
                 env->DeleteLocalRef(clClass);
 
-                // 2. Если системный не помог, ищем лоадер через Thread
-                if (local_loader == nullptr) {
-                    jclass threadClass = env->FindClass("java/lang/Thread");
-                    jmethodID currentThreadMethod = env->GetStaticMethodID(threadClass, "currentThread", "()Ljava/lang/Thread;");
-                    jobject threadObj = env->CallStaticObjectMethod(threadClass, currentThreadMethod);
 
-                    jmethodID getLoaderMethod = env->GetMethodID(threadClass, "getContextClassLoader", "()Ljava/lang/ClassLoader;");
-                    jobject threadLoader = env->CallObjectMethod(threadObj, getLoaderMethod);
 
-                    if (threadLoader != nullptr) {
-                        local_loader = env->NewGlobalRef(threadLoader);
-                        LOG_I("[Nuker] THREAD ClassLoader captured (Level: Context)!");
-                        if (g_jvm) g_jvm->SetFallbackClassLoaderFromJObject(local_loader);
-                        env->DeleteLocalRef(threadLoader);
+                jclass threadClass = env->FindClass("java/lang/Thread");
+                jmethodID currentThreadMethod = env->GetStaticMethodID(threadClass, "currentThread", "()Ljava/lang/Thread;");
+                jobject threadObj = env->CallStaticObjectMethod(threadClass, currentThreadMethod);
+
+                jmethodID getLoaderMethod = env->GetMethodID(threadClass, "getContextClassLoader", "()Ljava/lang/ClassLoader;");
+                jobject threadLoader = env->CallObjectMethod(threadObj, getLoaderMethod);
+
+                if (threadLoader != nullptr) {
+                    local_loader = env->NewGlobalRef(threadLoader);
+                    LOG_I("[Nuker] THREAD ClassLoader captured (Level: Context)!");
+                    if (g_jvm) {
+                        g_jvm->SetFallbackClassLoaderFromJObject(local_loader);
+                        Check_ads(env, local_loader);
                     }
-                    env->DeleteLocalRef(threadObj);
-                    env->DeleteLocalRef(threadClass);
+                    env->DeleteLocalRef(threadLoader);
                 }
-            }
+                env->DeleteLocalRef(threadObj);
+                env->DeleteLocalRef(threadClass);
 
 
-            // Если лоадер найден, настраиваем jni-bind
-            if (local_loader != nullptr) {
-              //  g_jvm->SetFallbackClassLoaderFromJObject(local_loader);
-            } else {
-                LOG_W("[Nuker] Waiting for Application Context...");
-                continue;
-            }
 
-            // Проверяем наличие Unity Ads через наш лоадер
-            if (!is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/properties/SdkProperties")) {
-                LOG_W("[Nuker] Unity SDK not loaded in Game ClassLoader yet.");
-                continue;
-            }
 
-            // --- ДАЛЕЕ ТВОЯ ЛОГИКА ОЧИСТКИ БЕЗ ИЗМЕНЕНИЙ ---
-            // --- ТЕПЕРЬ ПРОВЕРЯЕМ КАЖДЫЙ КЛАСС ПЕРЕД ВЫЗОВОМ ---
-            bool any_action = false;
+                auto activityThread = jni::StaticRef<kActivityThread>{};
+                auto appObj = activityThread("currentApplication");
 
-            // 1. Connectivity
-            if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/api/Connectivity")) {
-                auto connectivity = jni::StaticRef<kConnectivity>{};
-                if (connectivity.GetJClass() != nullptr) {
-                    connectivity("setConnectionStatus", 0);
-                    LOG_D("[Nuker] Connectivity: Offline");
-                    any_action = true;
-                }
-            } else {
-                LOG_W("[Nuker] Connectivity class not ready yet.");
-            }
+                if (static_cast<jobject>(appObj) != nullptr) {
+                    jni::LocalObject<kContext> app{std::move(appObj)};
 
-            // 2. SdkProperties (уже проверили выше, но для порядка)
-            if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/properties/SdkProperties")) {
-                auto sdkProps = jni::StaticRef<kSdkProperties>{};
-                if (sdkProps.GetJClass() != nullptr) {
-                    sdkProps("setInitialized", false);
-                    LOG_D("[Nuker] SdkProperties: Suppressed");
-                    any_action = true;
-                }
-            }
+                    // Вытаскиваем ClassLoader через JNI напрямую
+                    jclass contextClass = env->GetObjectClass(static_cast<jobject>(app));
+                    jmethodID getLoaderMethod = env->GetMethodID(contextClass, "getClassLoader", "()Ljava/lang/ClassLoader;");
+                    jobject rawLoader = env->CallObjectMethod(static_cast<jobject>(app), getLoaderMethod);
 
-            // 3. Placement
-            if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/properties/Placement")) {
-                auto placement = jni::StaticRef<kPlacement>{};
-                if (placement.GetJClass() != nullptr) {
-                    placement("reset");
-                    LOG_D("[Nuker] Placement: Reset");
-                    any_action = true;
-                }
-            }
-
-            // 4. WebViewApp & ClientProperties
-            if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/webview/WebViewApp")) {
-                auto webViewAppClass = jni::StaticRef<kWebViewApp>{};
-                if (webViewAppClass.GetJClass() != nullptr) {
-                    auto currentApp = webViewAppClass("getCurrentApp");
-                    if (static_cast<jobject>(currentApp) != nullptr) {
-
-                        if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/properties/ClientProperties")) {
-                            auto clientProps = jni::StaticRef<kClientProperties>{};
-                            if (clientProps.GetJClass() != nullptr) {
-                                clientProps("setGameId", jni::LocalString{"0000000"});
-                                LOG_I("[Nuker] WebView neutralised");
-                                any_action = true;
-                            }
+                    if (rawLoader != nullptr) {
+                        local_loader = env->NewGlobalRef(rawLoader);
+                        if (g_jvm) {
+                            g_jvm->SetFallbackClassLoaderFromJObject(local_loader);
+                            Check_ads(env, local_loader);
                         }
+                        env->DeleteLocalRef(rawLoader);
+                        LOG_I("[Nuker] Successfully captured Game ClassLoader!");
                     }
+                    env->DeleteLocalRef(contextClass);
                 }
-            }
-
-
-            if (any_action) LOG_I("[Nuker] Cycle complete.");
-
         } catch (...) {
             if (env->ExceptionCheck()) env->ExceptionClear();
         }
