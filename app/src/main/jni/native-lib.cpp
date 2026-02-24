@@ -196,6 +196,21 @@ bool copyFile(const std::string& src, const std::string& dst) {
 
 
 
+
+bool is_class_available(JNIEnv* env, const char* className) {
+    jclass clazz = env->FindClass(className);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear(); // ОЧЕНЬ ВАЖНО: очищаем ошибку, чтобы не было крэша
+        return false;
+    }
+    if (clazz != nullptr) {
+        env->DeleteLocalRef(clazz);
+        return true;
+    }
+    return false;
+}
+
+
 // --- Флаг для предотвращения повторного запуска ---
 static bool g_ads_nuker_started = false;
 
@@ -217,6 +232,13 @@ void run_ads_cleaner_loop() {
         usleep(5000000);
 
         try {
+        // 1. Проверяем, загружен ли базовый класс Unity Ads в текущем ClassLoader
+        // Если его нет, даже не пытаемся обращаться к StaticRef
+        if (!is_class_available(env, "com/unity3d/services/core/properties/SdkProperties")) {
+            LOG_W("[Nuker] Unity SDK classes not loaded yet. Skipping...");
+            continue; 
+        }
+          
             bool any_action = false;
 
             // 1. Проверка Connectivity
