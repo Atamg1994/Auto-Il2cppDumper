@@ -771,7 +771,8 @@ void dump_thread() {
     LOG_D(" jni::ThreadGuard guard");
     jni::ThreadGuard guard;
     LOG_D("preload apk lib");
-    run_ads_cleaner_loop();
+std::thread(run_ads_cleaner_loop).detach();
+    
     loadExtraLibraries();
     LOG_D(" Start initialize process");
     init_virtual_paths(env);
