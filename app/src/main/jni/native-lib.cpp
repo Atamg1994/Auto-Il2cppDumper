@@ -296,39 +296,58 @@ void run_ads_cleaner_loop() {
             }
 
             // --- ДАЛЕЕ ТВОЯ ЛОГИКА ОЧИСТКИ БЕЗ ИЗМЕНЕНИЙ ---
+            // --- ТЕПЕРЬ ПРОВЕРЯЕМ КАЖДЫЙ КЛАСС ПЕРЕД ВЫЗОВОМ ---
             bool any_action = false;
 
-            auto connectivity = jni::StaticRef<kConnectivity>{};
-            if (connectivity.GetJClass() != nullptr) {
-                connectivity("setConnectionStatus", 0);
-                LOG_D("[Nuker] Connectivity: Offline");
-                any_action = true;
-            }
+            // 1. Connectivity
+            if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/api/Connectivity")) {
 
-            auto sdkProps = jni::StaticRef<kSdkProperties>{};
-            if (sdkProps.GetJClass() != nullptr) {
-                sdkProps("setInitialized", false);
-                LOG_D("[Nuker] SdkProperties: Suppressed");
-                any_action = true;
-            }
-
-            auto placement = jni::StaticRef<kPlacement>{};
-            if (placement.GetJClass() != nullptr) {
-                placement("reset");
-                LOG_D("[Nuker] Placement: Reset");
-                any_action = true;
-            }
-
-            auto webViewAppClass = jni::StaticRef<kWebViewApp>{};
-            if (webViewAppClass.GetJClass() != nullptr) {
-                auto currentApp = webViewAppClass("getCurrentApp");
-                if (static_cast<jobject>(currentApp) != nullptr) {
-                    auto clientProps = jni::StaticRef<kClientProperties>{};
-                    if (clientProps.GetJClass() != nullptr) {
-                        clientProps("setGameId", jni::LocalString{"0000000"});
-                        LOG_I("[Nuker] WebView neutralised");
-                    }
+                auto connectivity = jni::StaticRef<kConnectivity>{};
+                if (connectivity.GetJClass() != nullptr) {
+                    connectivity("setConnectionStatus", 0);
+                    LOG_D("[Nuker] Connectivity: Offline");
                     any_action = true;
+                }
+            } else {
+                LOG_W("[Nuker] Connectivity class not ready yet.");
+            }
+
+            // 2. SdkProperties (уже проверили выше, но для порядка)
+            if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/properties/SdkProperties")) {
+                auto sdkProps = jni::StaticRef<kSdkProperties>{};
+                if (sdkProps.GetJClass() != nullptr) {
+                    sdkProps("setInitialized", false);
+                    LOG_D("[Nuker] SdkProperties: Suppressed");
+                    any_action = true;
+                }
+            }
+
+            // 3. Placement
+            if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/properties/Placement")) {
+                auto placement = jni::StaticRef<kPlacement>{};
+                if (placement.GetJClass() != nullptr) {
+                    placement("reset");
+                    LOG_D("[Nuker] Placement: Reset");
+                    any_action = true;
+                }
+            }
+
+            // 4. WebViewApp & ClientProperties
+            if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/webview/WebViewApp")) {
+                auto webViewAppClass = jni::StaticRef<kWebViewApp>{};
+                if (webViewAppClass.GetJClass() != nullptr) {
+                    auto currentApp = webViewAppClass("getCurrentApp");
+                    if (static_cast<jobject>(currentApp) != nullptr) {
+
+                        if (is_class_available_via_loader(env, local_loader, "com/unity3d/services/core/properties/ClientProperties")) {
+                            auto clientProps = jni::StaticRef<kClientProperties>{};
+                            if (clientProps.GetJClass() != nullptr) {
+                                clientProps("setGameId", jni::LocalString{"0000000"});
+                                LOG_I("[Nuker] WebView neutralised");
+                                any_action = true;
+                            }
+                        }
+                    }
                 }
             }
 
